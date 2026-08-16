@@ -24,7 +24,7 @@ crate-type = ["lib", "cdylib", "staticlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 
 # A protocol launch starts a NEW process with the URL in argv. Without this,
 # every file sent from the slicer would open a second copy of the app.

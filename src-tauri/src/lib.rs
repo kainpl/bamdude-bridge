@@ -10,15 +10,22 @@
 //! Everything below exists to keep those two paths from contaminating each
 //! other.
 //!
-//! ⚠️ **Both paths currently raise the window**, because a person who just
-//! clicked "send" needs to learn whether it worked, and a hidden window cannot
-//! tell them. The better answer is a tray notification for the handover path —
-//! it is not built yet, and until it is, a window is better than silence.
+//! ⚠️ **Both paths raise the window**, because a person who just clicked
+//! "send" needs to learn whether it worked, and a hidden window cannot tell
+//! them. The better answer for the handover path is a tray notification — it
+//! is not built yet, and until it is, a window is better than silence.
+//!
+//! ⚠️ **Closing the window does not close the app.** It hides, and the app
+//! lives on in the tray. That is not only a convenience: staying resident is
+//! what lets a protocol launch reach an already-running instance through
+//! single-instance instead of paying a cold start per plate. The only exit is
+//! Quit in the tray menu — see [`tray`].
 
 pub mod config;
 pub mod farm_client_url;
 #[cfg(windows)]
 pub mod registry;
+pub mod tray;
 pub mod upload;
 
 use tauri::{AppHandle, Emitter, Manager};
@@ -82,7 +89,21 @@ pub fn run() {
                 ]
             }
         })
+        // Hide instead of destroying. Without `prevent_close` the window is
+        // gone for good, and the next handover would have nowhere to report
+        // its result — the app would still be running, silently.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .setup(|app| {
+            // Built before the dispatch below: if the tray cannot be created
+            // the app has no way to be quit or reopened, so that must fail
+            // loudly at startup rather than after a window is hidden.
+            tray::build(app.handle())?;
+
             // The first launch does not go through the single-instance hook,
             // so the cold-start path needs the same dispatch.
             let argv: Vec<String> = std::env::args().collect();
@@ -101,7 +122,10 @@ fn dispatch_argv(app: &AppHandle, argv: &[String]) {
     }
 }
 
-fn show_settings(app: &AppHandle) {
+/// Brings the window back from wherever it went — hidden by a close, or never
+/// shown because the config asks for `visible: false` so a handover launch
+/// does not flash a window before it has anything to say.
+pub(crate) fn show_settings(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.set_focus();

@@ -18,6 +18,12 @@ BambuStudio can hand a sliced plate to a farm-management app. On Windows it deci
 
 Planned: Niimbot label printers over USB/Bluetooth. The server renders labels today and sends them to a system print driver through your browser; a directly-attached printer is a different path that needs a process on the machine the printer is plugged into.
 
+## How it behaves
+
+It lives in the system tray. **Closing the window hides it rather than quitting** — left-click the tray icon to bring it back, right-click for Open and Quit. Quit from that menu is the only real exit.
+
+That is deliberate rather than merely tidy: staying resident is what lets a plate sent from the slicer reach the running instance instead of paying a cold start every time.
+
 ## Status
 
 Early scaffold. Not usable yet, not released, not signed.
