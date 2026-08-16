@@ -93,6 +93,7 @@ pub fn run() {
                 ))
                 .build(),
         )
+        .plugin(tauri_plugin_notification::init())
         // A protocol launch is a NEW process. Without single-instance, every
         // plate sent from the slicer would open another copy of the app; with
         // it, the already-running instance gets the argv and the second
@@ -255,7 +256,10 @@ fn report(app: &AppHandle, status: HandoverStatus) {
         }
     }
 
-    // Passive signal for the quiet path — visible on hover, interrupts nobody.
+    // Passive signal — visible on hover, interrupts nobody, and works
+    // everywhere. Kept even though a toast is nicer, because a toast can be
+    // suppressed by Focus Assist or refused outright on a machine where this
+    // app has no Start Menu identity, and then the tooltip is all there is.
     if let Some(tray) = app.tray_by_id("main") {
         let _ = tray.set_tooltip(Some(match &status {
             HandoverStatus::Started { name } => format!("BamDude Bridge — sending {name}…"),
@@ -264,11 +268,41 @@ fn report(app: &AppHandle, status: HandoverStatus) {
         }));
     }
 
-    if matches!(status, HandoverStatus::Failed { .. }) {
-        show_settings(app);
+    match &status {
+        // The one moment worth a pop-up: it happened, it is done, and the
+        // window would have been an interruption.
+        HandoverStatus::Succeeded { name } => {
+            notify(
+                app,
+                "Sent to BamDude",
+                &format!("{name} is in your library."),
+            );
+        }
+        HandoverStatus::Failed { .. } => show_settings(app),
+        HandoverStatus::Started { .. } => {}
     }
 
     let _ = app.emit(EVENT_HANDOVER, status);
+}
+
+/// Pops a Windows toast, and says in the log whether it managed to.
+///
+/// ⚠️ **A toast is best-effort and must stay that way.** Windows routes it
+/// through an AppUserModelID that normally comes from a Start Menu shortcut —
+/// which the installer creates and a portable copy does not — and Focus Assist
+/// can swallow it regardless. So the outcome is logged rather than assumed:
+/// "the notification did not appear" is otherwise indistinguishable from "the
+/// upload never happened", which is the exact confusion this app already cost
+/// somebody once. The tray tooltip carries the same news unconditionally.
+fn notify(app: &AppHandle, title: &str, body: &str) {
+    use tauri_plugin_notification::NotificationExt;
+
+    match app.notification().builder().title(title).body(body).show() {
+        // Info rather than debug: this is the line that answers "did the
+        // notification fail, or did the upload?", and the log level is Info.
+        Ok(()) => log::info!("toast handed to Windows: {title}"),
+        Err(error) => log::warn!("could not show a toast ({error}) — tray tooltip still updated"),
+    }
 }
 
 /// What the window asks on mount, to catch a handover that finished before it

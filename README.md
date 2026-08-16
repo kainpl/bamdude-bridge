@@ -24,7 +24,9 @@ It lives in the system tray. **Closing the window hides it rather than quitting*
 
 That is deliberate rather than merely tidy: staying resident is what lets a plate sent from the slicer reach the running instance instead of paying a cold start every time. Registering as the receiver also adds a per-user autostart entry, so the same is true after a reboot; unregistering removes it again.
 
-**A handover does not raise the window.** The slicer is in front of you and jumping over it would be rude — and the confirmation you actually want, the file appearing in your library, arrives on its own. Only a failure takes the window, because a failure nobody sees is the same as no upload at all. The tray tooltip carries the last outcome either way, and everything is written to a log beside the settings.
+**A handover does not raise the window.** The slicer is in front of you and jumping over it would be rude. A success pops a notification instead; only a failure takes the window, because a failure nobody sees is the same as no upload at all.
+
+The tray tooltip carries the last outcome regardless — a notification can be suppressed by Focus Assist, or refused on a machine where this app has no Start Menu identity, and the tooltip cannot. Everything also goes to a log beside the settings, including whether the notification was accepted, so "no pop-up appeared" is never confused with "nothing happened".
 
 ## Downloads
 

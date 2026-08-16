@@ -66,6 +66,13 @@ cargo test --lib
 
 CI runs exactly those four, and the release workflow runs them again — a tag push does not trigger `ci.yml`, which fires on branches.
 
+⚠️ **Quit the app before building.** It lives in the tray, so it is usually
+running — and Windows will not let cargo replace an executable that is open.
+The failure reads `error: failed to remove file … Access is denied (os error
+5)`, which looks like a permissions problem and is really just the last build
+still running. Quit from the tray menu; if it was started elevated, a normal
+shell cannot stop it at all and the tray is the only way out.
+
 ### The part CI cannot do
 
 ⚠️ **A handover must be tested through Windows' own URL routing, not by launching the executable with the URL as an argument.** The two are not equivalent, and the difference is not academic: `ShellExecute` normalises a URL that has no path component by appending `/`, which lands glued to the end of the last parameter. Every probe that ran the binary directly passed while the real thing failed — that is how the first release shipped a handover that could not work.

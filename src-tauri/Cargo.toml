@@ -37,6 +37,9 @@ tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 log = "0.4"
 tauri-plugin-log = "2"
 
+# The quiet path needs something more visible than a tooltip nobody hovers.
+tauri-plugin-notification = "2"
+
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
