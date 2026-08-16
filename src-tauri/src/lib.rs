@@ -144,6 +144,18 @@ pub fn run() {
             // loudly at startup rather than after a window is hidden.
             tray::build(app.handle())?;
 
+            // Said once, loudly, at startup — the UI carries the same warning,
+            // but a log line survives to be read afterwards by whoever is
+            // wondering why plates stopped arriving.
+            #[cfg(windows)]
+            if registry::running_elevated() {
+                log::warn!(
+                    "running as administrator — BambuStudio cannot hand files to an elevated \
+                     instance, so every send from the slicer will silently do nothing. Quit and \
+                     start normally; registration elevates on its own when it needs to."
+                );
+            }
+
             // The first launch does not go through the single-instance hook,
             // so the cold-start path needs the same dispatch.
             let argv: Vec<String> = std::env::args().collect();

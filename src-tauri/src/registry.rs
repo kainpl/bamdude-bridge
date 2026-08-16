@@ -75,6 +75,10 @@ pub struct Status {
     pub protocol: Owner,
     /// Whether Windows starts us at sign-in, pointing at THIS executable.
     pub autostart: bool,
+
+    /// ⚠️ Whether this process is running elevated — which silently breaks the
+    /// one thing the app is for. See [`running_elevated`].
+    pub elevated: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -112,7 +116,32 @@ pub fn status() -> Result<Status, RegistryError> {
         marker_present: marker_present(),
         protocol: protocol_owner(&exe),
         autostart: autostart_points_at(&exe),
+        elevated: running_elevated(),
     })
+}
+
+/// True when this process holds administrator rights.
+///
+/// ⚠️ **Running elevated silently breaks every handover**, which is why this is
+/// worth detecting at all. BambuStudio runs unelevated; when it launches our
+/// URL, Windows starts an unelevated process that must hand the arguments to
+/// the instance already in the tray. If that instance is elevated, UIPI blocks
+/// the message across the integrity boundary — the second process exits, the
+/// first never hears, and **nothing is logged anywhere** because no code of
+/// ours ever runs. Observed exactly once, and it cost an hour.
+///
+/// "Run as administrator" is the obvious thing to try when a feature mentions
+/// admin rights, so this is a mistake users will make. Registration does not
+/// need it: it elevates a separate short-lived process for the one key.
+///
+/// Detected by asking for write access to a hive only administrators can
+/// write. Opening a key changes nothing, and the answer is exactly the
+/// privilege boundary that matters here — no extra dependency needed to learn
+/// it a more formal way.
+pub fn running_elevated() -> bool {
+    RegKey::predef(HKEY_LOCAL_MACHINE)
+        .open_subkey_with_flags("SOFTWARE", winreg::enums::KEY_WRITE)
+        .is_ok()
 }
 
 /// True only when the autostart entry points at **this** executable.

@@ -24,6 +24,7 @@ interface Registration {
   marker_present: boolean;
   protocol: Owner;
   autostart: boolean;
+  elevated: boolean;
 }
 
 const EMPTY: Settings = { server_url: "", api_key: "" };
@@ -98,6 +99,18 @@ export function App() {
             first question about any misbehaving build is which one it is. */}
         {version && <span className="version">v{version}</span>}
       </header>
+
+      {/* Above everything, because nothing else in this window works while it
+          is true — and the failure it causes leaves no trace at all. */}
+      {registration?.elevated && (
+        <section className="card bad">
+          <strong>Running as administrator</strong>
+          <br />
+          BambuStudio cannot hand files to an elevated app, so anything you send from the slicer
+          will quietly do nothing. Quit from the tray and start Bridge normally — registering asks
+          for administrator rights on its own, only when it needs them.
+        </section>
+      )}
 
       {handover && <HandoverCard status={handover} />}
 
