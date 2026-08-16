@@ -30,6 +30,30 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # Full history: the branch guard below asks which branches contain
+          # this commit, which a shallow clone cannot answer.
+          fetch-depth: 0
+
+      # Encodes the release rule rather than trusting everyone to remember it:
+      # stable ships from main, betas from dev. A stable tag sitting on a
+      # branch main has not seen means the artifacts do not match what main
+      # claims to be — and tags are immutable, so the only repair is burning a
+      # version number.
+      - name: Stable tags come from main, betas from dev
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          git fetch origin main dev --quiet 2>/dev/null || true
+          on_branch() {
+            git branch --remotes --contains "$GITHUB_SHA" \
+              | sed 's/^[* ]*//' | grep -qx "origin/$1"
+          }
+          if [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+b[0-9]+$ ]]; then
+            on_branch dev || { echo "beta tag ${GITHUB_REF_NAME} is not on dev" >&2; exit 1; }
+          else
+            on_branch main || { echo "stable tag ${GITHUB_REF_NAME} is not on main" >&2; exit 1; }
+          fi
 
       - name: Setup Node.js
         uses: actions/setup-node@v7

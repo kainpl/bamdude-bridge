@@ -78,6 +78,10 @@ a later `cargo clean` or a move to an installed copy leaves the scheme pointing
 at nothing, and files sent from the slicer quietly fail to arrive. Register
 again from whichever build you actually use.
 
+## Contributing
+
+Branching, release channels and what to test before tagging: [CONTRIBUTING.md](CONTRIBUTING.md). Same rules as BamDude — work in `feature/*`, merge to `dev`, fast-forward `main` for a stable release.
+
 ## Licence
 
 AGPL-3.0, matching BamDude. See [LICENSE](LICENSE).
