@@ -34,6 +34,7 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ tone: "ok" | "bad"; text: string } | null>(null);
   const [handover, setHandover] = useState<Handover | null>(null);
+  const [version, setVersion] = useState<string | null>(null);
 
   const refreshRegistration = useCallback(() => {
     invoke<Registration>("registration_status").then(setRegistration).catch(() => {
@@ -47,6 +48,7 @@ export function App() {
     invoke<Settings>("load_settings")
       .then(setSettings)
       .catch((error: unknown) => setMessage({ tone: "bad", text: String(error) }));
+    invoke<string>("app_version").then(setVersion).catch(() => setVersion(null));
     refreshRegistration();
   }, [refreshRegistration]);
 
@@ -90,7 +92,12 @@ export function App() {
 
   return (
     <main>
-      <h1>BamDude Bridge</h1>
+      <header>
+        <h1>BamDude Bridge</h1>
+        {/* Shown next to the name rather than hidden in an About box: the
+            first question about any misbehaving build is which one it is. */}
+        {version && <span className="version">v{version}</span>}
+      </header>
 
       {handover && <HandoverCard status={handover} />}
 

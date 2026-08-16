@@ -1,6 +1,6 @@
 [package]
 name = "bamdude-bridge"
-version = "0.1.0"
+version = "0.1.0-beta.1"
 description = "Desktop bridge between a Windows workstation and a BamDude server"
 authors = ["BamDude contributors"]
 license = "AGPL-3.0-or-later"

@@ -19,13 +19,19 @@ Commits follow [Conventional Commits](https://www.conventionalcommits.org/) — 
 | Channel | Tag | Branch |
 |---|---|---|
 | Stable | `vX.Y.Z` | `main` |
-| Beta | `vX.Y.ZbN` | `dev` |
+| Pre-release | `vX.Y.Z-beta.N` | `dev` |
 
-The release workflow reads the tag shape: `vX.Y.ZbN` is published as a **pre-release**, anything else as a full release. It also **refuses to build a stable tag that is not on `main`**, or a beta that is not on `dev` — the rule is enforced rather than remembered.
+The release workflow reads the tag shape: anything with a SemVer suffix after the version core is published as a **pre-release**, anything else as a full release. It also **refuses to build a stable tag that is not on `main`**, or a pre-release that is not on `dev` — the rule is enforced rather than remembered.
+
+⚠️ **The one deliberate divergence from BamDude: `-beta.N`, not `bN`.** BamDude's `0.5.3b1` is legal Python and illegal SemVer, and Cargo refuses to parse a manifest containing it. Rather than keep two spellings and a mapping between them — which is a drift waiting to happen — this repo uses the SemVer form everywhere: manifest, tag, installer filename and the version shown in the app are one identical string.
 
 ### Cutting a release
 
-1. Bump the version in **`src-tauri/tauri.conf.json`** — that file is what CI compares the tag against — and keep `src-tauri/Cargo.toml` and `package.json` in step with it.
+1. Bump the version — one command, four files:
+   ```bash
+   node scripts/set_version.js 0.2.0-beta.1
+   ```
+   It writes `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` and the lockfile, and refuses anything that is not SemVer. Editing by hand invites the release workflow's tag-vs-version check to stop you later, which is the good outcome; the bad one is an app reporting a version that was never built.
 2. Land it on `dev` and **wait for CI there to be green**:
    ```bash
    git push origin dev
@@ -44,7 +50,7 @@ The release workflow reads the tag shape: `vX.Y.ZbN` is published as a **pre-rel
 
 ### Naming
 
-Tag `v<version>`; release title `BamDude Bridge v<version>`, plus ` (pre-release)` for a beta. No subtitles — the body says what is in it.
+Tag `v<version>`; release title `BamDude Bridge v<version>`, plus ` (pre-release)` for a pre-release. No subtitles — the body says what is in it.
 
 ## Testing
 

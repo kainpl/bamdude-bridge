@@ -112,6 +112,7 @@ pub fn run() {
                     config::save_settings,
                     config::test_connection,
                     last_handover,
+                    app_version,
                     registry::registration_status,
                     registry::register_receiver,
                     registry::unregister_receiver,
@@ -124,6 +125,7 @@ pub fn run() {
                     config::save_settings,
                     config::test_connection,
                     last_handover,
+                    app_version,
                 ]
             }
         })
@@ -274,4 +276,15 @@ fn report(app: &AppHandle, status: HandoverStatus) {
 #[tauri::command]
 fn last_handover(state: tauri::State<'_, LastHandover>) -> Option<HandoverStatus> {
     state.0.lock().ok().and_then(|slot| slot.clone())
+}
+
+/// The build's own version, for the window to show.
+///
+/// Taken from the crate rather than passed in from the frontend, because
+/// `package.json` is not what gets shipped — the binary is. `scripts/set_version.js`
+/// keeps the two in step, and the release workflow refuses to build when the
+/// tag disagrees, so a version shown here is one that was really built.
+#[tauri::command]
+fn app_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
 }

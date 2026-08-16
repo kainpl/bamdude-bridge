@@ -41,10 +41,22 @@ main {
   gap: 20px;
 }
 
+header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
 h1 {
   margin: 0;
   font-size: 1.15rem;
   font-weight: 600;
+}
+
+.version {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
 }
 
 form {
