@@ -83,6 +83,13 @@ pub fn run() {
         .plugin(
             tauri_plugin_log::Builder::new()
                 .level(log::LevelFilter::Info)
+                // ⚠️ `target` ADDS to the plugin's defaults rather than
+                // replacing them, so without this the app wrote every line
+                // twice — once to "BamDude Bridge.log" and once to the file
+                // named below. Two identical logs is worse than one badly
+                // named: whoever is debugging reads whichever they find and
+                // cannot tell it is a duplicate.
+                .clear_targets()
                 .target(tauri_plugin_log::Target::new(
                     tauri_plugin_log::TargetKind::LogDir {
                         file_name: Some(String::from("bridge")),
