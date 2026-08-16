@@ -97,28 +97,49 @@ pub fn save_settings(app: AppHandle, settings: Settings) -> Result<(), String> {
     save(&app, &settings).map_err(|error| error.to_string())
 }
 
-/// Checks that the server answers and that the key is accepted, so the user
-/// finds out here rather than when a plate silently fails to arrive.
+/// Liveness probe. Unauthenticated, and at the ROOT — not under `/api/v1`.
+///
+/// ⚠️ **Not `/api/v1/system/health`.** That name is a trap: it scans the
+/// application log against a known-issue catalogue for the triage page, and
+/// rightly demands `SYSTEM_READ`. Pointing the connection test there made the
+/// bridge refuse to admit the server existed until the key was granted
+/// `can_read_status` — a scope it never uses for anything.
+const HEALTH_PATH: &str = "/health";
+
+/// Checks the address, and only the address.
+///
+/// ⚠️ **This deliberately does NOT verify the key**, and saying so is the
+/// honest option rather than a shortcut. Every read endpoint that could stand
+/// in for one maps to `can_read_status`, so probing through any of them would
+/// demand a scope the bridge has no use for. What it genuinely needs is
+/// `can_manage_library` — and nothing read-only carries that permission, so
+/// there is no way to prove it without writing a file into somebody's library.
+/// The key is therefore proven by the first real handover, whose failure
+/// message passes the server's own words straight through.
 #[tauri::command]
 pub async fn test_connection(settings: Settings) -> Result<String, String> {
-    if !settings.is_complete() {
-        return Err(String::from(
-            "Fill in both the server address and an API key.",
-        ));
+    if settings.server_url.trim().is_empty() {
+        return Err(String::from("Fill in the server address."));
     }
 
     let response = reqwest::Client::new()
-        .get(settings.endpoint("/api/v1/system/health"))
-        .header("X-API-Key", &settings.api_key)
+        .get(settings.endpoint(HEALTH_PATH))
         .send()
         .await
         .map_err(|error| format!("Cannot reach the server: {error}"))?;
 
-    if response.status().is_success() {
-        Ok(String::from("Connected."))
-    } else {
-        Err(format!("Server answered {}", response.status()))
+    if !response.status().is_success() {
+        return Err(format!("Server answered {}", response.status()));
     }
+
+    if settings.api_key.trim().is_empty() {
+        return Ok(String::from(
+            "Server is reachable — but no API key is set yet.",
+        ));
+    }
+    Ok(String::from(
+        "Server is reachable. The key is checked on the first upload.",
+    ))
 }
 
 #[cfg(test)]

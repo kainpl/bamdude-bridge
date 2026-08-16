@@ -23,6 +23,7 @@ type Owner =
 interface Registration {
   marker_present: boolean;
   protocol: Owner;
+  autostart: boolean;
 }
 
 const EMPTY: Settings = { server_url: "", api_key: "" };
@@ -117,7 +118,10 @@ export function App() {
             value={settings.api_key}
             onChange={(event) => setSettings({ ...settings, api_key: event.target.value })}
           />
-          <small>Needs the library-manage scope. Create one in BamDude under Settings → API keys.</small>
+          <small>
+            Needs the <strong>library-manage</strong> scope, and nothing else. Create one in BamDude
+            under Settings → API keys.
+          </small>
         </label>
 
         <div className="row">
@@ -169,7 +173,7 @@ function ReceiverSection({
   onRegister: () => void;
   onUnregister: () => void;
 }) {
-  const { marker_present: marker, protocol } = registration;
+  const { marker_present: marker, protocol, autostart } = registration;
   const [confirmed, setConfirmed] = useState(false);
 
   // Taking the scheme from another program is the one action here that harms
@@ -192,6 +196,11 @@ function ReceiverSection({
           {protocol.owner === "us" && "Files sent from the slicer arrive here."}
           {protocol.owner === "nobody" && "Nothing currently receives those files."}
           {protocol.owner === "foreign" && "Another program currently receives those files."}
+        </li>
+        <li className={autostart ? "ok" : undefined}>
+          {autostart
+            ? "Starts with Windows, straight to the tray."
+            : "Does not start with Windows — the first plate after a reboot waits for a cold start."}
         </li>
       </ul>
 

@@ -35,6 +35,11 @@ const MARKER_KEY: &str = r"SOFTWARE\Bambulab\Bambu Farm Manager Client";
 /// Root under which a user-scoped class registration lives.
 const CLASSES: &str = r"Software\Classes";
 
+/// Per-user autostart. HKCU rather than HKLM on purpose: this is one person's
+/// choice about their own sign-in, and it needs no elevation.
+const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+const RUN_VALUE: &str = "BamDude Bridge";
+
 /// Argument that puts a fresh, elevated instance into "write the marker and
 /// exit" mode. See [`request_elevated_marker`].
 pub const INSTALL_MARKER_ARG: &str = "--install-marker";
@@ -57,6 +62,8 @@ pub struct Status {
     pub marker_present: bool,
     /// Who currently receives the URL.
     pub protocol: Owner,
+    /// Whether Windows starts us at sign-in, pointing at THIS executable.
+    pub autostart: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -87,13 +94,32 @@ fn own_exe() -> Result<std::path::PathBuf, RegistryError> {
 
 // --- Inspection ----------------------------------------------------------
 
-/// Reports both registrations without changing anything.
+/// Reports every registration without changing anything.
 pub fn status() -> Result<Status, RegistryError> {
     let exe = own_exe()?;
     Ok(Status {
         marker_present: marker_present(),
         protocol: protocol_owner(&exe),
+        autostart: autostart_points_at(&exe),
     })
+}
+
+/// True only when the autostart entry points at **this** executable.
+///
+/// ⚠️ Same staleness trap as the protocol handler: the entry stores whatever
+/// path wrote it, so an entry left behind by a build that has since moved is
+/// worse than none — Windows would try to launch something that is not there,
+/// and the UI would happily claim autostart is on. Reporting "not us" makes
+/// the fix one click of Register.
+fn autostart_points_at(exe: &Path) -> bool {
+    let Ok(run) = RegKey::predef(HKEY_CURRENT_USER).open_subkey_with_flags(RUN_KEY, KEY_READ)
+    else {
+        return false;
+    };
+    let Ok(command) = run.get_value::<String, _>(RUN_VALUE) else {
+        return false;
+    };
+    command_target(&command).is_some_and(|target| same_file(&target, exe))
 }
 
 pub fn marker_present() -> bool {
@@ -216,6 +242,34 @@ pub fn remove_protocol_handler() -> Result<(), RegistryError> {
     }
 }
 
+/// Asks Windows to start us at sign-in, in the tray.
+///
+/// The `--minimized` flag is the whole difference between "be ready" and "be
+/// in the way": without it every boot would open a window nobody asked for.
+pub fn install_autostart() -> Result<(), RegistryError> {
+    let exe = own_exe()?;
+    let run = RegKey::predef(HKEY_CURRENT_USER)
+        .create_subkey(RUN_KEY)
+        .map_err(wrap)?
+        .0;
+    run.set_value(
+        RUN_VALUE,
+        &format!("\"{}\" {}", exe.display(), crate::MINIMIZED_ARG),
+    )
+    .map_err(wrap)
+}
+
+pub fn remove_autostart() -> Result<(), RegistryError> {
+    let run = RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey_with_flags(RUN_KEY, winreg::enums::KEY_WRITE | KEY_READ)
+        .map_err(wrap)?;
+    match run.delete_value(RUN_VALUE) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(wrap(error)),
+    }
+}
+
 /// Writes the HKLM marker. **Fails with [`RegistryError::AccessDenied`] unless
 /// this process is elevated** — see [`request_elevated_marker`].
 pub fn install_marker() -> Result<(), RegistryError> {
@@ -279,6 +333,13 @@ pub fn registration_status() -> Result<Status, String> {
 #[tauri::command]
 pub fn register_receiver() -> Result<Status, String> {
     install_protocol_handler().map_err(|error| error.to_string())?;
+
+    // Autostart comes with being the receiver rather than as a separate
+    // switch: a receiver that is not running when the slicer sends a plate
+    // still works — Windows starts it — but it pays a cold start every time
+    // and cannot be found in the tray in between.
+    install_autostart().map_err(|error| error.to_string())?;
+
     if !marker_present() {
         request_elevated_marker().map_err(|error| error.to_string())?;
     }
@@ -288,6 +349,8 @@ pub fn register_receiver() -> Result<Status, String> {
 #[tauri::command]
 pub fn unregister_receiver() -> Result<Status, String> {
     remove_protocol_handler().map_err(|error| error.to_string())?;
+    // Symmetry: nothing left to be ready for.
+    remove_autostart().map_err(|error| error.to_string())?;
     status().map_err(|error| error.to_string())
 }
 

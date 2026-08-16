@@ -10,10 +10,10 @@
 //! Everything below exists to keep those two paths from contaminating each
 //! other.
 //!
-//! ⚠️ **Both paths raise the window**, because a person who just clicked
-//! "send" needs to learn whether it worked, and a hidden window cannot tell
-//! them. The better answer for the handover path is a tray notification — it
-//! is not built yet, and until it is, a window is better than silence.
+//! ⚠️ **Only a plain launch raises the window.** A handover stays quiet unless
+//! it fails: the slicer is in front of the user and jumping over it is rude,
+//! and the confirmation they actually want — the file appearing in the library
+//! — arrives on its own. See [`report`] for where that is decided.
 //!
 //! ⚠️ **Closing the window does not close the app.** It hides, and the app
 //! lives on in the tray. That is not only a convenience: staying resident is
@@ -33,6 +33,11 @@ use tauri::{AppHandle, Emitter, Manager};
 
 /// Event the frontend listens on to report the outcome of a handover.
 const EVENT_HANDOVER: &str = "handover";
+
+/// Argument Windows autostart passes so the app comes up in the tray without a
+/// window. Defined here rather than beside the registry code because the
+/// dispatch that honours it is not Windows-specific.
+pub const MINIMIZED_ARG: &str = "--minimized";
 
 /// The last thing that happened to a handover, kept so the window can ask
 /// after the fact.
@@ -154,6 +159,11 @@ fn dispatch_argv(app: &AppHandle, argv: &[String]) {
             log::info!("handover URL received ({} bytes)", url.len());
             accept_handover(app, url)
         }
+        // Started by Windows at sign-in: be present, be invisible. Showing a
+        // window here would put one in front of every user on every boot.
+        None if argv.iter().any(|arg| arg == MINIMIZED_ARG) => {
+            log::info!("autostart launch — staying in the tray");
+        }
         None => {
             log::info!(
                 "plain launch — {} argument(s), none of them ours",
@@ -188,7 +198,6 @@ fn accept_handover(app: &AppHandle, url: &str) {
             // it means either a malformed launch or a change on Bambu's side,
             // and both are things somebody needs to see.
             log::error!("could not parse the handover URL: {error} — raw: {url}");
-            show_settings(app);
             report(
                 app,
                 HandoverStatus::Failed {
@@ -201,7 +210,6 @@ fn accept_handover(app: &AppHandle, url: &str) {
     };
 
     log::info!("handover: name={:?} path={:?}", request.name, request.path);
-    show_settings(app);
     report(
         app,
         HandoverStatus::Started {
@@ -228,6 +236,14 @@ fn accept_handover(app: &AppHandle, url: &str) {
     });
 }
 
+/// Records an outcome and decides how loudly to say it.
+///
+/// ⚠️ **Success is deliberately silent.** Raising the window on every plate
+/// meant the app leapt in front of the slicer mid-workflow, which is exactly
+/// what nobody asked for — and the confirmation the user actually wants shows
+/// up on its own, because the file appears in the BamDude library live. A
+/// failure is the opposite: rare, and useless if unseen, so it takes the
+/// window.
 fn report(app: &AppHandle, status: HandoverStatus) {
     // Stored first, then emitted: a listener that is already attached gets it
     // live, and one that attaches later can still ask.
@@ -236,6 +252,20 @@ fn report(app: &AppHandle, status: HandoverStatus) {
             *slot = Some(status.clone());
         }
     }
+
+    // Passive signal for the quiet path — visible on hover, interrupts nobody.
+    if let Some(tray) = app.tray_by_id("main") {
+        let _ = tray.set_tooltip(Some(match &status {
+            HandoverStatus::Started { name } => format!("BamDude Bridge — sending {name}…"),
+            HandoverStatus::Succeeded { name } => format!("BamDude Bridge — sent {name}"),
+            HandoverStatus::Failed { name, .. } => format!("BamDude Bridge — {name} FAILED"),
+        }));
+    }
+
+    if matches!(status, HandoverStatus::Failed { .. }) {
+        show_settings(app);
+    }
+
     let _ = app.emit(EVENT_HANDOVER, status);
 }
 
