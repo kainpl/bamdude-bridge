@@ -1,0 +1,113 @@
+//! BamDude Bridge.
+//!
+//! Two ways this binary starts, and they want opposite things:
+//!
+//! - **A person opens it** — show the settings window, let them point it at a
+//!   server and register the protocol.
+//! - **The slicer hands it a file** — Windows starts a fresh process with a
+//!   `bambu-farm-client://…` URL in argv. Do the work and say what happened.
+//!
+//! Everything below exists to keep those two paths from contaminating each
+//! other.
+//!
+//! ⚠️ **Both paths currently raise the window**, because a person who just
+//! clicked "send" needs to learn whether it worked, and a hidden window cannot
+//! tell them. The better answer is a tray notification for the handover path —
+//! it is not built yet, and until it is, a window is better than silence.
+
+pub mod config;
+pub mod farm_client_url;
+pub mod upload;
+
+use tauri::{AppHandle, Emitter, Manager};
+
+/// Event the frontend listens on to report the outcome of a handover.
+const EVENT_HANDOVER: &str = "handover";
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(tag = "state", rename_all = "kebab-case")]
+pub enum HandoverStatus {
+    Started { name: String },
+    Succeeded { name: String },
+    Failed { name: String, error: String },
+}
+
+pub fn run() {
+    tauri::Builder::default()
+        // A protocol launch is a NEW process. Without single-instance, every
+        // plate sent from the slicer would open another copy of the app; with
+        // it, the already-running instance gets the argv and the second
+        // process exits.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            dispatch_argv(app, &argv);
+        }))
+        .invoke_handler(tauri::generate_handler![
+            config::load_settings,
+            config::save_settings,
+            config::test_connection,
+        ])
+        .setup(|app| {
+            // The first launch does not go through the single-instance hook,
+            // so the cold-start path needs the same dispatch.
+            let argv: Vec<String> = std::env::args().collect();
+            dispatch_argv(app.handle(), &argv);
+            Ok(())
+        })
+        .run(tauri::generate_context!())
+        .expect("failed to start BamDude Bridge");
+}
+
+/// Decides what this launch was for.
+fn dispatch_argv(app: &AppHandle, argv: &[String]) {
+    match argv.iter().find(|arg| farm_client_url::is_ours(arg)) {
+        Some(url) => accept_handover(app, url),
+        None => show_settings(app),
+    }
+}
+
+fn show_settings(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+/// Handles one "here is a sliced plate" URL from the slicer.
+///
+/// ⚠️ **The file is temporary and not ours.** BambuStudio exports it into its
+/// own backup directory and never promised to keep it; it is cleaned up when
+/// the slicer exits, and re-slicing the same plate overwrites it in place. So
+/// the read happens now, on this launch, not on a queue we drain later.
+fn accept_handover(app: &AppHandle, url: &str) {
+    let request = match farm_client_url::parse(url) {
+        Ok(request) => request,
+        Err(error) => {
+            // A URL we cannot read is worth surfacing rather than swallowing:
+            // it means either a malformed launch or a change on Bambu's side,
+            // and both are things somebody needs to see.
+            report(
+                app,
+                HandoverStatus::Failed { name: String::from("(unparsed)"), error: error.to_string() },
+            );
+            return;
+        }
+    };
+
+    show_settings(app);
+    report(app, HandoverStatus::Started { name: request.name.clone() });
+
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let status = match upload::send_to_library(&app, &request).await {
+            Ok(()) => HandoverStatus::Succeeded { name: request.name },
+            Err(error) => {
+                HandoverStatus::Failed { name: request.name, error: error.to_string() }
+            }
+        };
+        report(&app, status);
+    });
+}
+
+fn report(app: &AppHandle, status: HandoverStatus) {
+    let _ = app.emit(EVENT_HANDOVER, status);
+}

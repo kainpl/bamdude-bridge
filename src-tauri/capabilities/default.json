@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "What the settings window is allowed to ask the Rust side for. Everything that touches the filesystem, the registry or the network happens in Rust behind a named command — the webview gets no direct capability for any of it.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

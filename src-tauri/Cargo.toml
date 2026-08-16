@@ -1,0 +1,61 @@
+[package]
+name = "bamdude-bridge"
+version = "0.1.0"
+description = "Desktop bridge between a Windows workstation and a BamDude server"
+authors = ["BamDude contributors"]
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/kainpl/bamdude-bridge"
+edition = "2021"
+rust-version = "1.77"
+
+# ⚠️ Minor versions below are a first pass written before a toolchain existed
+# on this machine — nothing here has been resolved by cargo yet. Expect the
+# first `cargo build` to move some of them; that is the point at which they
+# become facts rather than guesses.
+
+[lib]
+# Tauri wants the app's logic in a lib so the mobile targets can link it, and
+# so integration tests can reach it. `farm_client_url` is unit-tested through
+# this crate.
+name = "bamdude_bridge_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+
+# A protocol launch starts a NEW process with the URL in argv. Without this,
+# every file sent from the slicer would open a second copy of the app.
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+# The whole reason parsing is delicate — see farm_client_url.rs.
+percent-encoding = "2"
+
+# rustls rather than the platform stack: one behaviour to reason about, and no
+# schannel-vs-openssl difference between a dev box and a CI runner.
+reqwest = { version = "0.12", default-features = false, features = [
+    "multipart",
+    "json",
+    "rustls-tls",
+] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs"] }
+
+[target.'cfg(windows)'.dependencies]
+# Registry access for the two keys that make BambuStudio offer the button and
+# make Windows route the URL back to us.
+winreg = "0.52"
+
+[profile.release]
+# A bridge is not a hot loop; size matters more than the last few percent of
+# speed, because this is a binary people download.
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

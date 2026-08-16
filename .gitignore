@@ -1,0 +1,25 @@
+# Node
+node_modules/
+dist/
+*.local
+
+# Rust / Tauri
+src-tauri/target/
+src-tauri/gen/
+
+# Secrets and machine-local settings. The app stores its own config in the
+# OS config dir, not in the repo, but a developer pointing at a test server
+# will reach for a dotenv sooner or later.
+.env
+.env.*
+!.env.example
+
+# Editors
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
