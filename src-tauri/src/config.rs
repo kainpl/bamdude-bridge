@@ -106,40 +106,99 @@ pub fn save_settings(app: AppHandle, settings: Settings) -> Result<(), String> {
 /// `can_read_status` — a scope it never uses for anything.
 const HEALTH_PATH: &str = "/health";
 
-/// Checks the address, and only the address.
+/// Probe that answers the only question worth asking: **may this key put a
+/// file in the library?**
 ///
-/// ⚠️ **This deliberately does NOT verify the key**, and saying so is the
-/// honest option rather than a shortcut. Every read endpoint that could stand
-/// in for one maps to `can_read_status`, so probing through any of them would
-/// demand a scope the bridge has no use for. What it genuinely needs is
-/// `can_manage_library` — and nothing read-only carries that permission, so
-/// there is no way to prove it without writing a file into somebody's library.
-/// The key is therefore proven by the first real handover, whose failure
-/// message passes the server's own words straight through.
+/// It is a scan of a folder id far beyond anything that can exist, on an
+/// endpoint guarded by the same `LIBRARY_UPLOAD` permission an upload needs.
+/// FastAPI resolves that guard *before* the handler runs, so the two outcomes
+/// separate cleanly and nothing is written either way:
+///
+/// | Answer | Meaning |
+/// |---|---|
+/// | 404 | permission granted — the folder simply is not there |
+/// | 403 | key is real but lacks `can_manage_library` |
+/// | 401 | key is not real |
+///
+/// ⚠️ **`/auth/me` cannot replace this.** It validates a key while requiring no
+/// permission — but for an API key it answers with a synthetic admin user
+/// carrying all 111 permissions regardless of the key's actual scopes, so
+/// reading its `permissions` would confidently report access the key does not
+/// have. Verified against a live server before choosing this route.
+///
+/// ⚠️ The id must stay impossible. A real one would start an actual folder
+/// scan, turning a read-only check into work.
+const WRITE_PROBE_PATH: &str = "/api/v1/library/folders/2147483647/scan";
+
+/// Checks the address, the key, and — the part that actually matters — whether
+/// that key is allowed to add files to the library.
+///
+/// Anything less is a test that passes and then lets the first real plate fail,
+/// which is precisely the failure this app already had once.
 #[tauri::command]
 pub async fn test_connection(settings: Settings) -> Result<String, String> {
     if settings.server_url.trim().is_empty() {
         return Err(String::from("Fill in the server address."));
     }
 
+    // No key yet: the address is still worth checking on its own, and the
+    // unauthenticated probe is the only thing that can check it.
+    if settings.api_key.trim().is_empty() {
+        let response = reqwest::Client::new()
+            .get(settings.endpoint(HEALTH_PATH))
+            .send()
+            .await
+            .map_err(|error| format!("Cannot reach the server: {error}"))?;
+
+        return if response.status().is_success() {
+            Ok(String::from(
+                "Server is reachable — but no API key is set yet.",
+            ))
+        } else {
+            Err(format!("Server answered {}", response.status()))
+        };
+    }
+
     let response = reqwest::Client::new()
-        .get(settings.endpoint(HEALTH_PATH))
+        .post(settings.endpoint(WRITE_PROBE_PATH))
+        .header("X-API-Key", &settings.api_key)
         .send()
         .await
         .map_err(|error| format!("Cannot reach the server: {error}"))?;
 
-    if !response.status().is_success() {
-        return Err(format!("Server answered {}", response.status()));
+    let status = response.status();
+    match status {
+        // The guard let us through and only the folder was missing — which is
+        // the whole point of asking for one that cannot exist.
+        reqwest::StatusCode::NOT_FOUND => Ok(String::from(
+            "Connected. This key can add files to the library.",
+        )),
+        reqwest::StatusCode::UNAUTHORIZED => Err(String::from(
+            "The server is there, but this API key is not valid.",
+        )),
+        // The server names the scope it wanted, so quote it rather than
+        // paraphrasing — the message is the fix.
+        reqwest::StatusCode::FORBIDDEN => Err(format!(
+            "The key is valid but not allowed to add files to the library. {}",
+            server_detail(response).await.unwrap_or_default()
+        )),
+        // Success would mean the impossible id was real and we just started a
+        // scan. Permission is proven, but say so plainly.
+        status if status.is_success() => Ok(String::from(
+            "Connected, and the key can write — though the probe hit a real folder, which it \
+             should never do. Worth reporting.",
+        )),
+        status => Err(format!("Server answered {status}")),
     }
+}
 
-    if settings.api_key.trim().is_empty() {
-        return Ok(String::from(
-            "Server is reachable — but no API key is set yet.",
-        ));
-    }
-    Ok(String::from(
-        "Server is reachable. The key is checked on the first upload.",
-    ))
+async fn server_detail(response: reqwest::Response) -> Option<String> {
+    let body = response.text().await.ok()?;
+    let parsed: serde_json::Value = serde_json::from_str(&body).ok()?;
+    parsed
+        .get("detail")?
+        .as_str()
+        .map(|detail| format!("Server says: {detail}"))
 }
 
 #[cfg(test)]
