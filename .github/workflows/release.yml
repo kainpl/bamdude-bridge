@@ -133,8 +133,14 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force dist-release | Out-Null
 
-          $setup = Get-ChildItem "target/release/bundle/nsis/*-setup.exe" | Select-Object -First 1
-          if (-not $setup) { throw "no NSIS installer was produced" }
+          # Matched on the version rather than taking the first file found. A
+          # CI checkout is clean so today there is exactly one — but "first of
+          # whatever is lying around" is how a stale artifact from an earlier
+          # build gets published under a new version's name, and the failure
+          # would be a correct-looking release containing the wrong binary.
+          $setup = Get-ChildItem "target/release/bundle/nsis/*_${env:version}_x64-setup.exe"
+          if (-not $setup) { throw "no NSIS installer for version $env:version was produced" }
+          if ($setup.Count -gt 1) { throw "more than one installer matched version $env:version" }
           Copy-Item $setup.FullName "dist-release/bamdude-bridge-$env:version-windows-x64-setup.exe"
 
           # The portable build is the same binary, plus the instructions that
