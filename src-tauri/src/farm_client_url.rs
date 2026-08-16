@@ -78,6 +78,19 @@ pub enum ParseError {
 /// Parses one raw command-line argument into an upload request.
 pub fn parse(raw: &str) -> Result<UploadRequest, ParseError> {
     let rest = strip_scheme(raw).ok_or(ParseError::ForeignScheme)?;
+
+    // ⚠️ Windows appends a trailing `/` when it routes the URL through the
+    // shell, because a URL with no path component gets normalised to have an
+    // empty one. Everything here is encoded into what looks like the authority,
+    // so that slash lands at the very end of the last parameter's value.
+    //
+    // Dropping it is safe rather than merely convenient: every slash that
+    // BELONGS to a value arrives percent-encoded as `%2F`, so a bare `/` in
+    // this position cannot be anything but the shell's doing. BambuStudio also
+    // strips `/` out of project names itself, so `name` can never legitimately
+    // end in one.
+    let rest = rest.trim_end_matches('/');
+
     let (action, query) = split_action(rest);
 
     if !action.eq_ignore_ascii_case(ACTION_UPLOAD_FILE) {
@@ -252,6 +265,36 @@ mod tests {
             "C:/Users/kain/AppData/Roaming/BambuStudio/backup/1234/Metadata/.5678.0.3mf"
         );
         assert_eq!(got.name, "Widget_plate_2");
+    }
+
+    #[test]
+    fn windows_appends_a_trailing_slash_when_it_routes_the_url() {
+        // ⚠️ THE bug that made the first real handover fail, and fail silently.
+        //
+        // ShellExecute normalises a URL that has no path component by appending
+        // `/`. Our whole query is percent-encoded into what looks like the
+        // authority, so there IS no path — and the slash lands at the very end,
+        // glued to `name`. The upload then asked the library to store
+        // "Widget_plate_2/.gcode.3mf" and got a 400 back.
+        //
+        // Launching the executable directly with the URL as argv does NOT go
+        // through that normalisation, which is exactly why every probe before
+        // this one passed while the real thing did not.
+        let got = parse(&format!("{REAL}/")).expect("the shape Windows actually delivers");
+
+        assert_eq!(got.name, "Widget_plate_2");
+        assert_eq!(
+            got.path,
+            "C:/Users/kain/AppData/Roaming/BambuStudio/backup/1234/Metadata/.5678.0.3mf"
+        );
+    }
+
+    #[test]
+    fn a_trailing_slash_on_the_path_parameter_is_also_dropped() {
+        // Same normalisation, reached when `name` is absent from the query —
+        // then it is the path that ends up carrying the slash.
+        let url = "bambu-farm-client://upload-file%3Fpath%3DC%3A%2Ftmp%2Fa.3mf%26name%3DX/";
+        assert_eq!(parse(url).unwrap().name, "X");
     }
 
     #[test]

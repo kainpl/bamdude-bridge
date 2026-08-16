@@ -28,10 +28,23 @@ pub mod registry;
 pub mod tray;
 pub mod upload;
 
+use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 
 /// Event the frontend listens on to report the outcome of a handover.
 const EVENT_HANDOVER: &str = "handover";
+
+/// The last thing that happened to a handover, kept so the window can ask
+/// after the fact.
+///
+/// ⚠️ **An event alone loses the cold-start case.** A handover that starts the
+/// process emits its result from `setup()`, which runs before the webview has
+/// mounted and subscribed — so the report goes nowhere and the user sees an
+/// empty window and assumes it worked. That is precisely how the first real
+/// failure looked like a success. Whether the event beats the mount is a race,
+/// and a race is not a reporting mechanism.
+#[derive(Default)]
+pub struct LastHandover(Mutex<Option<HandoverStatus>>);
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(tag = "state", rename_all = "kebab-case")]
@@ -58,11 +71,29 @@ pub fn run() {
     }
 
     tauri::Builder::default()
+        .manage(LastHandover::default())
+        // Registered first so everything after it can be logged. The file
+        // target is the point: a handover happens unattended, and a release
+        // build has no console to print to.
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .level(log::LevelFilter::Info)
+                .target(tauri_plugin_log::Target::new(
+                    tauri_plugin_log::TargetKind::LogDir {
+                        file_name: Some(String::from("bridge")),
+                    },
+                ))
+                .target(tauri_plugin_log::Target::new(
+                    tauri_plugin_log::TargetKind::Stdout,
+                ))
+                .build(),
+        )
         // A protocol launch is a NEW process. Without single-instance, every
         // plate sent from the slicer would open another copy of the app; with
         // it, the already-running instance gets the argv and the second
         // process exits.
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            log::info!("second instance forwarded {} argument(s)", argv.len());
             dispatch_argv(app, &argv);
         }))
         // The registry half exists only on Windows — everything it touches is
@@ -75,6 +106,7 @@ pub fn run() {
                     config::load_settings,
                     config::save_settings,
                     config::test_connection,
+                    last_handover,
                     registry::registration_status,
                     registry::register_receiver,
                     registry::unregister_receiver,
@@ -86,6 +118,7 @@ pub fn run() {
                     config::load_settings,
                     config::save_settings,
                     config::test_connection,
+                    last_handover,
                 ]
             }
         })
@@ -117,8 +150,17 @@ pub fn run() {
 /// Decides what this launch was for.
 fn dispatch_argv(app: &AppHandle, argv: &[String]) {
     match argv.iter().find(|arg| farm_client_url::is_ours(arg)) {
-        Some(url) => accept_handover(app, url),
-        None => show_settings(app),
+        Some(url) => {
+            log::info!("handover URL received ({} bytes)", url.len());
+            accept_handover(app, url)
+        }
+        None => {
+            log::info!(
+                "plain launch — {} argument(s), none of them ours",
+                argv.len()
+            );
+            show_settings(app)
+        }
     }
 }
 
@@ -145,6 +187,8 @@ fn accept_handover(app: &AppHandle, url: &str) {
             // A URL we cannot read is worth surfacing rather than swallowing:
             // it means either a malformed launch or a change on Bambu's side,
             // and both are things somebody needs to see.
+            log::error!("could not parse the handover URL: {error} — raw: {url}");
+            show_settings(app);
             report(
                 app,
                 HandoverStatus::Failed {
@@ -156,6 +200,7 @@ fn accept_handover(app: &AppHandle, url: &str) {
         }
     };
 
+    log::info!("handover: name={:?} path={:?}", request.name, request.path);
     show_settings(app);
     report(
         app,
@@ -167,16 +212,36 @@ fn accept_handover(app: &AppHandle, url: &str) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let status = match upload::send_to_library(&app, &request).await {
-            Ok(()) => HandoverStatus::Succeeded { name: request.name },
-            Err(error) => HandoverStatus::Failed {
-                name: request.name,
-                error: error.to_string(),
-            },
+            Ok(()) => {
+                log::info!("handover complete: {:?} is in the library", request.name);
+                HandoverStatus::Succeeded { name: request.name }
+            }
+            Err(error) => {
+                log::error!("handover failed for {:?}: {error}", request.name);
+                HandoverStatus::Failed {
+                    name: request.name,
+                    error: error.to_string(),
+                }
+            }
         };
         report(&app, status);
     });
 }
 
 fn report(app: &AppHandle, status: HandoverStatus) {
+    // Stored first, then emitted: a listener that is already attached gets it
+    // live, and one that attaches later can still ask.
+    if let Some(state) = app.try_state::<LastHandover>() {
+        if let Ok(mut slot) = state.0.lock() {
+            *slot = Some(status.clone());
+        }
+    }
     let _ = app.emit(EVENT_HANDOVER, status);
+}
+
+/// What the window asks on mount, to catch a handover that finished before it
+/// was listening.
+#[tauri::command]
+fn last_handover(state: tauri::State<'_, LastHandover>) -> Option<HandoverStatus> {
+    state.0.lock().ok().and_then(|slot| slot.clone())
 }

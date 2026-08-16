@@ -52,6 +52,8 @@ pub async fn send_to_library(app: &AppHandle, request: &UploadRequest) -> Result
     }
 
     let bytes = read_slicer_file(&request.path).await?;
+    log::info!("read {} bytes from {}", bytes.len(), request.path);
+
     post(
         &settings,
         &format!("{}{SLICED_3MF_SUFFIX}", request.name),
@@ -86,8 +88,11 @@ async fn post(settings: &Settings, filename: &str, bytes: Vec<u8>) -> Result<(),
         .mime_str("application/octet-stream")
         .expect("a literal MIME type cannot fail to parse");
 
+    let url = settings.endpoint(LIBRARY_UPLOAD_PATH);
+    log::info!("POST {url} as {filename:?}");
+
     let response = reqwest::Client::new()
-        .post(settings.endpoint(LIBRARY_UPLOAD_PATH))
+        .post(&url)
         .header("X-API-Key", &settings.api_key)
         .multipart(reqwest::multipart::Form::new().part("file", part))
         .send()
@@ -95,6 +100,7 @@ async fn post(settings: &Settings, filename: &str, bytes: Vec<u8>) -> Result<(),
         .map_err(|error| UploadError::Unreachable(error.to_string()))?;
 
     let status = response.status();
+    log::info!("server answered {status}");
     if status.is_success() {
         return Ok(());
     }

@@ -30,6 +30,13 @@ tauri = { version = "2", features = ["tray-icon"] }
 # every file sent from the slicer would open a second copy of the app.
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 
+# A handover happens with no one watching, in a release build that has no
+# console (`windows_subsystem = "windows"`). Without a log on disk, a failed
+# upload is indistinguishable from one that never started — which is exactly
+# how the first real handover failed: silently, with nothing to read.
+log = "0.4"
+tauri-plugin-log = "2"
+
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

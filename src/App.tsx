@@ -49,10 +49,25 @@ export function App() {
     refreshRegistration();
   }, [refreshRegistration]);
 
-  // The handover can land while this window is open — the slicer sends a
-  // second plate, single-instance routes it here — so this stays subscribed
-  // rather than reading a one-shot value at startup.
+  // Two halves, and both are needed.
+  //
+  // The subscription catches a handover that lands while this window is
+  // already open — the slicer sends a second plate and single-instance routes
+  // it here.
+  //
+  // ⚠️ The fetch catches the one that finished BEFORE this component mounted.
+  // A handover that starts the process reports from Rust's setup(), well
+  // before React is listening, so relying on the event alone loses exactly the
+  // case that matters most — and an empty window reads as success.
   useEffect(() => {
+    invoke<Handover | null>("last_handover")
+      .then((last) => {
+        if (last) setHandover(last);
+      })
+      .catch(() => {
+        // Nothing to show is a normal first run, not an error worth a banner.
+      });
+
     const stop = listen<Handover>("handover", (event) => setHandover(event.payload));
     return () => {
       void stop.then((unlisten) => unlisten());
