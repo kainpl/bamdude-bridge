@@ -93,7 +93,6 @@ pub fn run() {
                 ))
                 .build(),
         )
-        .plugin(tauri_plugin_notification::init())
         // A protocol launch is a NEW process. Without single-instance, every
         // plate sent from the slicer would open another copy of the app; with
         // it, the already-running instance gets the argv and the second
@@ -294,16 +293,46 @@ fn report(app: &AppHandle, status: HandoverStatus) {
 /// "the notification did not appear" is otherwise indistinguishable from "the
 /// upload never happened", which is the exact confusion this app already cost
 /// somebody once. The tray tooltip carries the same news unconditionally.
+///
+/// ⚠️ **The AppUserModelID only works because registration declares it.**
+///
+/// Windows draws a toast only for an AUMID it knows, and handing it an unknown
+/// one is the worst possible outcome: the call **succeeds** and nothing is ever
+/// drawn. That is not hypothetical — it happened here, logging a cheerful
+/// "handed to Windows" at an empty screen. What makes ours known is
+/// `registry::install_toast_identity`, written during registration; a Start
+/// Menu shortcut carrying the id would do the same job with far more work.
+///
+/// ⚠️ **Windows caches the name on the id's first use.** Send a toast under an
+/// id before declaring it and the sender reads `top.bamdude.bridge` forever
+/// after, whatever the registry says later. Nothing here may send a toast on a
+/// path that registration has not already passed through — which holds today
+/// only because a handover cannot happen before the protocol is registered.
+#[cfg(windows)]
 fn notify(app: &AppHandle, title: &str, body: &str) {
-    use tauri_plugin_notification::NotificationExt;
+    use tauri_winrt_notification::{Duration, Toast};
 
-    match app.notification().builder().title(title).body(body).show() {
+    // Windows offers exactly two lengths — 7 seconds and 25 — and no way to
+    // ask for a number in between. Short is the default and goes past before
+    // you have looked up from the slicer, which is the whole reason this
+    // exists, so Long it is. (`Scenario::Reminder` would pin it on screen
+    // until dismissed; that is right for an alarm and wrong for "your file
+    // arrived", which nobody should have to dismiss once per plate.)
+    let toast = Toast::new(&app.config().identifier)
+        .title(title)
+        .text1(body)
+        .duration(Duration::Long);
+
+    match toast.show() {
         // Info rather than debug: this is the line that answers "did the
         // notification fail, or did the upload?", and the log level is Info.
         Ok(()) => log::info!("toast handed to Windows: {title}"),
         Err(error) => log::warn!("could not show a toast ({error}) — tray tooltip still updated"),
     }
 }
+
+#[cfg(not(windows))]
+fn notify(_app: &AppHandle, _title: &str, _body: &str) {}
 
 /// What the window asks on mount, to catch a handover that finished before it
 /// was listening.

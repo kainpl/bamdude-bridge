@@ -24,6 +24,7 @@
 use serde::Serialize;
 use std::path::Path;
 use std::process::Command;
+use tauri::Manager;
 use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ};
 use winreg::RegKey;
 
@@ -39,6 +40,16 @@ const CLASSES: &str = r"Software\Classes";
 /// choice about their own sign-in, and it needs no elevation.
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 const RUN_VALUE: &str = "BamDude Bridge";
+
+/// Where an unpackaged app tells Windows what its notifications are called.
+const TOAST_IDENTITY_KEY: &str = r"Software\Classes\AppUserModelId";
+
+/// Icon Windows draws on the toast. Embedded rather than read from the install
+/// directory, because the portable build is one loose executable and the
+/// installed one keeps its icons inside the binary — neither leaves a PNG
+/// lying about for the notification platform to point at.
+const TOAST_ICON: &[u8] = include_bytes!("../icons/128x128.png");
+const TOAST_ICON_FILE: &str = "toast-icon.png";
 
 /// Argument that puts a fresh, elevated instance into "write the marker and
 /// exit" mode. See [`request_elevated_marker`].
@@ -270,6 +281,64 @@ pub fn remove_autostart() -> Result<(), RegistryError> {
     }
 }
 
+/// Teaches Windows what this app's notifications are called.
+///
+/// Without this, a toast sent under our own AppUserModelID is **not drawn at
+/// all** — the call succeeds and the screen stays empty, which is the single
+/// most misleading failure in this whole app. With it, the id is valid and the
+/// toast carries a name and an icon instead of a raw reverse-DNS string.
+///
+/// ⚠️ **Windows caches this on the AUMID's first use and never re-reads it.**
+/// Register the identity BEFORE anything sends a toast under that id, or the
+/// sender is stuck showing `top.bamdude.bridge` forever, no matter what the
+/// key says afterwards. That ordering is why this lives in
+/// [`register_receiver`]: registration necessarily precedes the first
+/// handover, because there are no handovers until the protocol is registered.
+///
+/// The icon is best-effort — a missing one costs a picture, while failing the
+/// whole registration over it would cost the feature.
+pub fn install_toast_identity(
+    aumid: &str,
+    display_name: &str,
+    icon: Option<&Path>,
+) -> Result<(), RegistryError> {
+    let key = RegKey::predef(HKEY_CURRENT_USER)
+        .create_subkey(format!(r"{TOAST_IDENTITY_KEY}\{aumid}"))
+        .map_err(wrap)?
+        .0;
+
+    key.set_value("DisplayName", &display_name).map_err(wrap)?;
+
+    if let Some(icon) = icon {
+        let _ = key.set_value("IconUri", &icon.display().to_string());
+    }
+    Ok(())
+}
+
+pub fn remove_toast_identity(aumid: &str) -> Result<(), RegistryError> {
+    let classes = RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey_with_flags(TOAST_IDENTITY_KEY, winreg::enums::KEY_WRITE | KEY_READ)
+        .map_err(wrap)?;
+    match classes.delete_subkey_all(aumid) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(wrap(error)),
+    }
+}
+
+/// Drops the embedded icon somewhere the notification platform can read it,
+/// and answers with the path. Best-effort by design — see
+/// [`install_toast_identity`].
+fn write_toast_icon(config_dir: &Path) -> Option<std::path::PathBuf> {
+    let path = config_dir.join(TOAST_ICON_FILE);
+    if path.exists() {
+        return Some(path);
+    }
+    std::fs::create_dir_all(config_dir).ok()?;
+    std::fs::write(&path, TOAST_ICON).ok()?;
+    Some(path)
+}
+
 /// Writes the HKLM marker. **Fails with [`RegistryError::AccessDenied`] unless
 /// this process is elevated** — see [`request_elevated_marker`].
 pub fn install_marker() -> Result<(), RegistryError> {
@@ -331,7 +400,7 @@ pub fn registration_status() -> Result<Status, String> {
 }
 
 #[tauri::command]
-pub fn register_receiver() -> Result<Status, String> {
+pub fn register_receiver(app: tauri::AppHandle) -> Result<Status, String> {
     install_protocol_handler().map_err(|error| error.to_string())?;
 
     // Autostart comes with being the receiver rather than as a separate
@@ -340,6 +409,19 @@ pub fn register_receiver() -> Result<Status, String> {
     // and cannot be found in the tray in between.
     install_autostart().map_err(|error| error.to_string())?;
 
+    // ⚠️ Must happen here, and not lazily before the first toast: Windows
+    // caches an AUMID's name on first use and never looks again. Registering
+    // is the last moment that is still guaranteed to be earlier than any
+    // handover, because a handover cannot happen until the line above ran.
+    let aumid = app.config().identifier.clone();
+    let icon = app
+        .path()
+        .app_config_dir()
+        .ok()
+        .and_then(|dir| write_toast_icon(&dir));
+    install_toast_identity(&aumid, "BamDude Bridge", icon.as_deref())
+        .map_err(|error| error.to_string())?;
+
     if !marker_present() {
         request_elevated_marker().map_err(|error| error.to_string())?;
     }
@@ -347,10 +429,11 @@ pub fn register_receiver() -> Result<Status, String> {
 }
 
 #[tauri::command]
-pub fn unregister_receiver() -> Result<Status, String> {
+pub fn unregister_receiver(app: tauri::AppHandle) -> Result<Status, String> {
     remove_protocol_handler().map_err(|error| error.to_string())?;
     // Symmetry: nothing left to be ready for.
     remove_autostart().map_err(|error| error.to_string())?;
+    let _ = remove_toast_identity(&app.config().identifier);
     status().map_err(|error| error.to_string())
 }
 

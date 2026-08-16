@@ -37,8 +37,10 @@ tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 log = "0.4"
 tauri-plugin-log = "2"
 
-# The quiet path needs something more visible than a tooltip nobody hovers.
-tauri-plugin-notification = "2"
+# ⚠️ NOT tauri-plugin-notification. The plugin wraps this same crate but
+# exposes no duration at all, and 7 seconds was too quick to catch. Going
+# direct costs nothing — it was already in the tree as the plugin's own
+# dependency — and buys the two lengths Windows actually offers.
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -60,6 +62,9 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs"] }
 # Registry access for the two keys that make BambuStudio offer the button and
 # make Windows route the URL back to us.
 winreg = "0.52"
+
+# Toasts, with control over how long they stay.
+tauri-winrt-notification = "0.7"
 
 [profile.release]
 # A bridge is not a hot loop; size matters more than the last few percent of
