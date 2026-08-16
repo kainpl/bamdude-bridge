@@ -132,10 +132,19 @@ fn parse_upload_query(query: &str) -> Result<UploadRequest, ParseError> {
     // like an anchor — and the path is the half we must not corrupt, because
     // we open it. A name pathological enough to contain a literal `&name=`
     // loses its tail; a path we truncate loses the file.
-    let name = find_param(query, "name", path.val_at).ok_or(ParseError::MissingParameter("name"))?;
-    if name.sep_at < path.val_at {
-        return Err(ParseError::ParametersOutOfOrder);
-    }
+    let name = match find_param(query, "name", path.val_at) {
+        Some(found) => found,
+        None => {
+            // Nothing after `path`. Absent, or the slicer reordered its
+            // format string — worth distinguishing, because the second means
+            // our reading of the format has gone stale and the message should
+            // say so rather than blame a missing parameter.
+            return Err(match find_param(query, "name", 0) {
+                Some(_) => ParseError::ParametersOutOfOrder,
+                None => ParseError::MissingParameter("name"),
+            });
+        }
+    };
 
     // `version` is the leading parameter, so it carries no separator of its
     // own: the query begins with it directly. Absent is fine.
@@ -151,24 +160,55 @@ fn parse_upload_query(query: &str) -> Result<UploadRequest, ParseError> {
 }
 
 /// Finds `&key=` — or its encoded twin `%26key%3D` — at or after `from`.
+///
+/// ⚠️ **The first parameter of a query carries no separator**, because the `?`
+/// that introduced it was consumed along with the action. `version` is
+/// optional, so `path` is routinely the leading one; a search that only looks
+/// for the separator form finds nothing at all in that very common case.
 fn find_param(query: &str, key: &str, from: usize) -> Option<Param> {
     let tail = query.get(from..)?;
+
+    if from == 0 {
+        if let Some(leading) = match_leading(tail, key) {
+            return Some(leading);
+        }
+    }
+
     for (sep, eq) in [("%26", "%3D"), ("&", "=")] {
         let pattern = format!("{sep}{key}{eq}");
         if let Some(at) = find_ci(tail, &pattern) {
             let sep_at = from + at;
-            return Some(Param { sep_at, val_at: sep_at + pattern.len() });
+            return Some(Param {
+                sep_at,
+                val_at: sep_at + pattern.len(),
+            });
         }
     }
     None
 }
 
-/// Finds `key=` / `key%3D` sitting at the very start of the query.
+/// Finds `key=` / `key%3D` sitting at the very start of `query`.
+///
+/// Used on its own for `version`, which is only ever the leading parameter:
+/// accepting it anywhere would let a `version` that follows `path` produce a
+/// backwards slice.
 fn find_leading_param(query: &str, key: &str) -> Option<Param> {
+    match_leading(query, key)
+}
+
+fn match_leading(text: &str, key: &str) -> Option<Param> {
     for eq in ["%3D", "="] {
         let pattern = format!("{key}{eq}");
-        if query.len() >= pattern.len() && query[..pattern.len()].eq_ignore_ascii_case(&pattern) {
-            return Some(Param { sep_at: 0, val_at: pattern.len() });
+        // `get` rather than indexing: the lenient unencoded form can carry
+        // multi-byte UTF-8, and slicing into the middle of a character panics.
+        if text
+            .get(..pattern.len())
+            .is_some_and(|head| head.eq_ignore_ascii_case(&pattern))
+        {
+            return Some(Param {
+                sep_at: 0,
+                val_at: pattern.len(),
+            });
         }
     }
     None
@@ -178,7 +218,9 @@ fn find_leading_param(query: &str, key: &str) -> Option<Param> {
 /// ORIGINAL string. Safe because `to_ascii_lowercase` maps only `A-Z`, leaving
 /// every other byte — including multi-byte UTF-8 — the same length.
 fn find_ci(haystack: &str, needle: &str) -> Option<usize> {
-    haystack.to_ascii_lowercase().find(&needle.to_ascii_lowercase())
+    haystack
+        .to_ascii_lowercase()
+        .find(&needle.to_ascii_lowercase())
 }
 
 fn decode(raw: &str, what: &'static str) -> Result<String, ParseError> {
@@ -217,7 +259,11 @@ mod tests {
         // Guards the trap documented on `UploadRequest::name`: if this ever
         // starts carrying `.3mf`, the callers appending a suffix are wrong.
         let got = parse(REAL).unwrap();
-        assert!(!got.name.contains('.'), "name unexpectedly carries an extension: {}", got.name);
+        assert!(
+            !got.name.contains('.'),
+            "name unexpectedly carries an extension: {}",
+            got.name
+        );
     }
 
     #[test]
@@ -267,8 +313,22 @@ mod tests {
     }
 
     #[test]
+    fn a_leading_path_is_found_even_though_it_has_no_separator() {
+        // Regression. The first parameter of a query carries no separator —
+        // the `?` went with the action — and `version` is optional, so a
+        // leading `path` is the ordinary case rather than an exotic one.
+        // Searching only for the `%26path%3D` form found nothing at all here
+        // and reported the path missing, which took five tests down at once.
+        let url = "bambu-farm-client://upload-file%3Fpath%3DC%3A%2Ftmp%2Fa.3mf%26name%3DX";
+        assert_eq!(parse(url).unwrap().path, "C:/tmp/a.3mf");
+    }
+
+    #[test]
     fn a_foreign_scheme_is_refused() {
-        assert_eq!(parse("https://example.com/upload-file"), Err(ParseError::ForeignScheme));
+        assert_eq!(
+            parse("https://example.com/upload-file"),
+            Err(ParseError::ForeignScheme)
+        );
         assert!(!is_ours("https://example.com"));
         assert!(is_ours(REAL));
     }

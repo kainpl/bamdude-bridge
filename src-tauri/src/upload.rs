@@ -32,7 +32,10 @@ pub enum UploadError {
     FileMissing { path: String },
 
     #[error("cannot read {path}: {source}")]
-    FileUnreadable { path: String, source: std::io::Error },
+    FileUnreadable {
+        path: String,
+        source: std::io::Error,
+    },
 
     #[error("cannot reach the server: {0}")]
     Unreachable(String),
@@ -49,7 +52,12 @@ pub async fn send_to_library(app: &AppHandle, request: &UploadRequest) -> Result
     }
 
     let bytes = read_slicer_file(&request.path).await?;
-    post(&settings, &format!("{}{SLICED_3MF_SUFFIX}", request.name), bytes).await
+    post(
+        &settings,
+        &format!("{}{SLICED_3MF_SUFFIX}", request.name),
+        bytes,
+    )
+    .await
 }
 
 /// ⚠️ Distinguishes "not there" from "there but unreadable" deliberately. The
@@ -61,9 +69,14 @@ async fn read_slicer_file(path: &str) -> Result<Vec<u8>, UploadError> {
     match tokio::fs::read(path).await {
         Ok(bytes) => Ok(bytes),
         Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
-            Err(UploadError::FileMissing { path: path.to_owned() })
+            Err(UploadError::FileMissing {
+                path: path.to_owned(),
+            })
         }
-        Err(source) => Err(UploadError::FileUnreadable { path: path.to_owned(), source }),
+        Err(source) => Err(UploadError::FileUnreadable {
+            path: path.to_owned(),
+            source,
+        }),
     }
 }
 
@@ -98,7 +111,10 @@ async fn post(settings: &Settings, filename: &str, bytes: Vec<u8>) -> Result<(),
         .map(|body| format!(": {body}"))
         .unwrap_or_default();
 
-    Err(UploadError::Rejected { status: status.as_u16(), detail })
+    Err(UploadError::Rejected {
+        status: status.as_u16(),
+        detail,
+    })
 }
 
 #[cfg(test)]
@@ -107,8 +123,13 @@ mod tests {
 
     #[tokio::test]
     async fn a_missing_file_is_reported_as_missing_not_as_unreadable() {
-        let error = read_slicer_file("C:/definitely/not/here/plate.3mf").await.unwrap_err();
-        assert!(matches!(error, UploadError::FileMissing { .. }), "got {error:?}");
+        let error = read_slicer_file("C:/definitely/not/here/plate.3mf")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, UploadError::FileMissing { .. }),
+            "got {error:?}"
+        );
     }
 
     #[test]
@@ -116,6 +137,9 @@ mod tests {
         // Mirrors what send_to_library builds, and guards the trap that the
         // slicer's `name` arrives bare.
         let name = "Widget_plate_2";
-        assert_eq!(format!("{name}{SLICED_3MF_SUFFIX}"), "Widget_plate_2.gcode.3mf");
+        assert_eq!(
+            format!("{name}{SLICED_3MF_SUFFIX}"),
+            "Widget_plate_2.gcode.3mf"
+        );
     }
 }

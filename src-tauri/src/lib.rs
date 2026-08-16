@@ -17,6 +17,8 @@
 
 pub mod config;
 pub mod farm_client_url;
+#[cfg(windows)]
+pub mod registry;
 pub mod upload;
 
 use tauri::{AppHandle, Emitter, Manager};
@@ -33,6 +35,21 @@ pub enum HandoverStatus {
 }
 
 pub fn run() {
+    // Before Tauri gets a chance to build a window: this launch may be the
+    // elevated helper, whose whole job is one registry write. It must not
+    // start a GUI — the user is looking at the un-elevated instance that
+    // raised the prompt.
+    #[cfg(windows)]
+    if std::env::args().any(|arg| arg == registry::INSTALL_MARKER_ARG) {
+        std::process::exit(match registry::install_marker() {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("{error}");
+                1
+            }
+        });
+    }
+
     tauri::Builder::default()
         // A protocol launch is a NEW process. Without single-instance, every
         // plate sent from the slicer would open another copy of the app; with
@@ -41,11 +58,30 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             dispatch_argv(app, &argv);
         }))
-        .invoke_handler(tauri::generate_handler![
-            config::load_settings,
-            config::save_settings,
-            config::test_connection,
-        ])
+        // The registry half exists only on Windows — everything it touches is
+        // a Windows concept — so the command list is spelled twice rather than
+        // gated inside the macro, which cannot take a `cfg` per entry.
+        .invoke_handler({
+            #[cfg(windows)]
+            {
+                tauri::generate_handler![
+                    config::load_settings,
+                    config::save_settings,
+                    config::test_connection,
+                    registry::registration_status,
+                    registry::register_receiver,
+                    registry::unregister_receiver,
+                ]
+            }
+            #[cfg(not(windows))]
+            {
+                tauri::generate_handler![
+                    config::load_settings,
+                    config::save_settings,
+                    config::test_connection,
+                ]
+            }
+        })
         .setup(|app| {
             // The first launch does not go through the single-instance hook,
             // so the cold-start path needs the same dispatch.
@@ -87,22 +123,31 @@ fn accept_handover(app: &AppHandle, url: &str) {
             // and both are things somebody needs to see.
             report(
                 app,
-                HandoverStatus::Failed { name: String::from("(unparsed)"), error: error.to_string() },
+                HandoverStatus::Failed {
+                    name: String::from("(unparsed)"),
+                    error: error.to_string(),
+                },
             );
             return;
         }
     };
 
     show_settings(app);
-    report(app, HandoverStatus::Started { name: request.name.clone() });
+    report(
+        app,
+        HandoverStatus::Started {
+            name: request.name.clone(),
+        },
+    );
 
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let status = match upload::send_to_library(&app, &request).await {
             Ok(()) => HandoverStatus::Succeeded { name: request.name },
-            Err(error) => {
-                HandoverStatus::Failed { name: request.name, error: error.to_string() }
-            }
+            Err(error) => HandoverStatus::Failed {
+                name: request.name,
+                error: error.to_string(),
+            },
         };
         report(&app, status);
     });

@@ -111,6 +111,56 @@ button:disabled {
   line-height: 1.45;
 }
 
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.panel h2 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.state {
+  margin: 0;
+  padding-left: 18px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.state li.ok {
+  color: var(--ok);
+  border: none;
+}
+
+code {
+  display: block;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 5px;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 0.85em;
+  overflow-wrap: anywhere;
+}
+
+.confirm {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-weight: 500;
+}
+
+.confirm input {
+  width: auto;
+  margin: 0;
+}
+
 .ok {
   color: var(--ok);
   border-color: color-mix(in srgb, var(--ok) 40%, transparent);

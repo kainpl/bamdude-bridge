@@ -30,7 +30,11 @@ impl Settings {
 
     /// Absolute URL of one API path, joined without doubling the slash.
     pub fn endpoint(&self, path: &str) -> String {
-        format!("{}/{}", self.server_url.trim_end_matches('/'), path.trim_start_matches('/'))
+        format!(
+            "{}/{}",
+            self.server_url.trim_end_matches('/'),
+            path.trim_start_matches('/')
+        )
     }
 }
 
@@ -65,7 +69,8 @@ pub fn load(app: &AppHandle) -> Result<Settings, ConfigError> {
         return Ok(Settings::default());
     }
 
-    let raw = std::fs::read_to_string(&path).map_err(|error| ConfigError::Read(error.to_string()))?;
+    let raw =
+        std::fs::read_to_string(&path).map_err(|error| ConfigError::Read(error.to_string()))?;
     serde_json::from_str(&raw).map_err(|error| ConfigError::Malformed(error.to_string()))
 }
 
@@ -75,8 +80,8 @@ pub fn save(app: &AppHandle, settings: &Settings) -> Result<(), ConfigError> {
         std::fs::create_dir_all(parent).map_err(|error| ConfigError::Write(error.to_string()))?;
     }
 
-    let encoded =
-        serde_json::to_string_pretty(settings).map_err(|error| ConfigError::Write(error.to_string()))?;
+    let encoded = serde_json::to_string_pretty(settings)
+        .map_err(|error| ConfigError::Write(error.to_string()))?;
     std::fs::write(&path, encoded).map_err(|error| ConfigError::Write(error.to_string()))
 }
 
@@ -97,7 +102,9 @@ pub fn save_settings(app: AppHandle, settings: Settings) -> Result<(), String> {
 #[tauri::command]
 pub async fn test_connection(settings: Settings) -> Result<String, String> {
     if !settings.is_complete() {
-        return Err(String::from("Fill in both the server address and an API key."));
+        return Err(String::from(
+            "Fill in both the server address and an API key.",
+        ));
     }
 
     let response = reqwest::Client::new()
@@ -124,7 +131,10 @@ mod tests {
             server_url: String::from("http://host:8000/"),
             api_key: String::from("bb_x"),
         };
-        assert_eq!(settings.endpoint("/api/v1/library/files"), "http://host:8000/api/v1/library/files");
+        assert_eq!(
+            settings.endpoint("/api/v1/library/files"),
+            "http://host:8000/api/v1/library/files"
+        );
     }
 
     #[test]
