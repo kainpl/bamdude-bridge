@@ -40,7 +40,26 @@ npm run tauri build      # produce an installer
 ```
 
 `tauri build` will not start until `src-tauri/icons/` exists — the icon step
-above generates every size the bundler asks for from one source PNG.
+above generates every size the bundler asks for from one source PNG. (They are
+committed, so a fresh clone does not need it; run it only after changing the
+source image.)
+
+### Where the output lands
+
+Build output goes to `target/` at the repository root, not under `src-tauri/` —
+see `.cargo/config.toml`.
+
+| | |
+|---|---|
+| Debug binary (`tauri dev`) | `target/debug/bamdude-bridge.exe` |
+| Release binary | `target/release/bamdude-bridge.exe` |
+| Installer | `target/release/bundle/nsis/BamDude Bridge_<version>_x64-setup.exe` |
+
+⚠️ **Registering the protocol handler writes the path of the binary that did
+it.** Register from a dev build and the registry points into `target/debug/`;
+a later `cargo clean` or a move to an installed copy leaves the scheme pointing
+at nothing, and files sent from the slicer quietly fail to arrive. Register
+again from whichever build you actually use.
 
 ## Licence
 

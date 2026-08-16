@@ -1,0 +1,14 @@
+# Build output at the repository root rather than buried under src-tauri/.
+#
+# The path is resolved relative to THIS FILE's directory, not to the working
+# directory cargo runs in — verified, because the natural reading is the other
+# one. So cargo invoked from src-tauri/ still writes to <repo root>/target/,
+# and the installer lands at:
+#
+#     target/release/bundle/nsis/BamDude Bridge_<version>_x64-setup.exe
+#
+# ⚠️ Changing this value relocates the whole build cache. Cargo records
+# absolute paths in its fingerprints, so the first build afterwards is a cold
+# one — several minutes with the Tauri dependency tree.
+[build]
+target-dir = "target"

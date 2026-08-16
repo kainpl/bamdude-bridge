@@ -4,7 +4,8 @@ dist/
 *.local
 
 # Rust / Tauri
-src-tauri/target/
+# target/ sits at the root, not under src-tauri/ — see .cargo/config.toml.
+/target/
 src-tauri/gen/
 
 # Secrets and machine-local settings. The app stores its own config in the
