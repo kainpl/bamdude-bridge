@@ -1,0 +1,158 @@
+name: Release
+
+# Builds the two things a user can download and attaches them to the tag's
+# GitHub release:
+#
+#   - an NSIS installer, for people who want Start Menu entries and an
+#     uninstaller;
+#   - a portable .zip, for people who want neither. Registration is a button
+#     inside the app rather than installer work, so the portable build is not
+#     a lesser version — it does everything the installed one does.
+#
+# Windows-only, like CI: the registry module is cfg(windows), so a Linux
+# runner would report green on code that never compiled.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+# Needed by the release step to attach assets to the tag.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-release-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: cargo-release-${{ runner.os }}-
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # A tag push does not run ci.yml — that one triggers on branches — so the
+      # checks run here too rather than shipping something unverified.
+      - name: Typecheck frontend
+        run: npm run typecheck
+
+      - name: Check formatting
+        working-directory: src-tauri
+        run: cargo fmt --check
+
+      - name: Clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        working-directory: src-tauri
+        run: cargo test --lib
+
+      # ⚠️ The version lives in tauri.conf.json and the tag lives in git, and
+      # nothing keeps them honest. Shipping v0.2.0 built from a tree that still
+      # says 0.1.0 produces artifacts whose filenames and About box disagree
+      # with the release they hang under — and nobody notices until a bug
+      # report cites a version that was never built.
+      - name: Tag must match the version in tauri.conf.json
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          declared=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          tagged="${GITHUB_REF_NAME#v}"
+          if [ "$declared" != "$tagged" ]; then
+            echo "tag $GITHUB_REF_NAME says $tagged, tauri.conf.json says $declared" >&2
+            exit 1
+          fi
+          echo "version=$declared" >> "$GITHUB_ENV"
+
+      - name: Resolve version for a manual run
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        shell: bash
+        run: echo "version=$(node -p "require('./src-tauri/tauri.conf.json').version")" >> "$GITHUB_ENV"
+
+      - name: Build installer
+        run: npm run tauri build
+
+      # Tauri names the installer after the product, which is fine on a
+      # download page and awkward in a URL. Rename to match how BamDude's own
+      # installer is published, so both read the same way.
+      - name: Stage artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist-release | Out-Null
+
+          $setup = Get-ChildItem "target/release/bundle/nsis/*-setup.exe" | Select-Object -First 1
+          if (-not $setup) { throw "no NSIS installer was produced" }
+          Copy-Item $setup.FullName "dist-release/bamdude-bridge-$env:version-windows-x64-setup.exe"
+
+          # The portable build is the same binary, plus the instructions that
+          # would otherwise have been the installer's job to imply.
+          New-Item -ItemType Directory -Force portable-staging | Out-Null
+          Copy-Item "target/release/bamdude-bridge.exe" portable-staging/
+          Copy-Item "packaging/portable-README.txt" portable-staging/README.txt
+          Copy-Item "LICENSE" portable-staging/
+          Compress-Archive -Path portable-staging/* `
+            -DestinationPath "dist-release/bamdude-bridge-$env:version-windows-x64-portable.zip" -Force
+
+          # Unversioned aliases so a website or wiki can link one URL that
+          # survives version bumps, the same way the BamDude installer does.
+          Copy-Item "dist-release/bamdude-bridge-$env:version-windows-x64-setup.exe" `
+            "dist-release/bamdude-bridge-windows-x64-setup.exe"
+          Copy-Item "dist-release/bamdude-bridge-$env:version-windows-x64-portable.zip" `
+            "dist-release/bamdude-bridge-windows-x64-portable.zip"
+
+          Get-ChildItem dist-release | Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB,2)}}
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: bamdude-bridge-${{ env.version }}
+          path: dist-release/*
+          if-no-files-found: error
+
+      # Beta tags are vX.Y.ZbN, stable is vX.Y.Z — same convention as BamDude.
+      # This step CREATES the release when it does not exist yet, and without
+      # the flag it would create a full one, displacing the current stable as
+      # "Latest".
+      - name: Classify tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        id: tagkind
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+b[0-9]+$ ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v3
+        with:
+          files: dist-release/*
+          fail_on_unmatched_files: true
+          prerelease: ${{ steps.tagkind.outputs.prerelease }}

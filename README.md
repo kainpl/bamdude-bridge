@@ -26,9 +26,18 @@ That is deliberate rather than merely tidy: staying resident is what lets a plat
 
 **A handover does not raise the window.** The slicer is in front of you and jumping over it would be rude — and the confirmation you actually want, the file appearing in your library, arrives on its own. Only a failure takes the window, because a failure nobody sees is the same as no upload at all. The tray tooltip carries the last outcome either way, and everything is written to a log beside the settings.
 
+## Downloads
+
+Two builds, both doing the same job — registration is a button inside the app, never installer work, so neither is the lesser one.
+
+- **Installer** (`…-setup.exe`) — Start Menu entry, uninstaller, and it fetches the WebView2 runtime if the machine lacks it.
+- **Portable** (`…-portable.zip`) — unpack anywhere and run. "Portable" means no installer and nothing written next to the executable; settings and logs still live under `%APPDATA%` / `%LOCALAPPDATA%`, and registering still touches the registry. The archive's README says so plainly.
+
+⚠️ **Neither is signed**, so SmartScreen warns on first run: **More info → Run anyway**.
+
 ## Status
 
-Early scaffold. Not usable yet, not released, not signed.
+Early. Working end to end on Windows, not yet released, not signed.
 
 ## Requirements
 
