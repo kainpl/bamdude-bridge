@@ -16,4 +16,5 @@
 //! flows is ported so far; whoever brings the rest over will be reading the
 //! same source, and a port that hides its origin is one they cannot continue.
 
+pub mod encoder;
 pub mod packet;
