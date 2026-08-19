@@ -32,13 +32,34 @@ use bamdude_bridge_lib::label::transport::Transport;
 /// default when the loaded size is unknown.
 const DEFAULT_LENGTH_MM: f32 = 20.0;
 
+/// Label size in millimetres: across the printhead, then along the feed.
+#[derive(Debug, Clone, Copy)]
+struct LabelSize {
+    across_mm: f32,
+    along_mm: f32,
+}
+
+/// `40x20` — the way the cassette is labelled.
+///
+/// ⚠️ A label is **not** the printhead. Printing the full head width onto a
+/// narrower label puts the edges of the image past the edges of the paper,
+/// where they are simply not there — which reads as "the corners are missing"
+/// rather than as "the image is too wide".
+fn parse_size(text: &str) -> Option<LabelSize> {
+    let (w, l) = text.split_once(['x', 'X', '*', '×'])?;
+    Some(LabelSize {
+        across_mm: w.trim().parse().ok()?,
+        along_mm: l.trim().parse().ok()?,
+    })
+}
+
 type Failure = Box<dyn std::error::Error>;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let command = args.first().map(String::as_str).unwrap_or("help");
-    let mm = |i: usize| args.get(i).and_then(|v| v.parse::<f32>().ok());
+    let size = |i: usize| args.get(i).and_then(|v| parse_size(v));
     let density = |i: usize| args.get(i).and_then(|v| v.parse::<u8>().ok());
 
     let result: Result<(), Failure> = match command {
@@ -48,14 +69,14 @@ async fn main() {
         }
         "render" => render_to(
             args.get(1).map(String::as_str).unwrap_or("probe.png"),
-            mm(2).unwrap_or(DEFAULT_LENGTH_MM),
+            size(2),
         ),
         "probe" => match args.get(1) {
             Some(port) => probe(port).await,
             None => Err("probe needs a port, e.g. `probe COM6`".into()),
         },
         "print" => match args.get(1) {
-            Some(port) => print(port, mm(2).unwrap_or(DEFAULT_LENGTH_MM), density(3)).await,
+            Some(port) => print(port, size(2), density(3)).await,
             None => Err("print needs a port, e.g. `print COM6`".into()),
         },
         _ => {
@@ -74,9 +95,11 @@ const USAGE: &str = "\
 niimbot_probe — bench tool for the label printer port
 
   ports                     list serial ports, most likely printer first
-  render <file.png> [mm]    write the test image without touching a printer
+  render <file.png> [WxL]   write the test image without touching a printer
   probe <PORT>              ask the printer what it is and what is loaded
-  print <PORT> [mm] [1-5]   print the test image (this feeds paper)
+  print <PORT> [WxL] [1-5]  print the test image (this feeds paper)
+
+WxL is the cassette size in millimetres, e.g. 40x20 — across the head first.
 
 The vendor app holds the port exclusively — close it before using these.
 ";
@@ -163,9 +186,27 @@ fn test_image(across: u32, along: u32, direction: PrintDirection) -> image::Dyna
     image::DynamicImage::ImageLuma8(img)
 }
 
-fn encode_for(model: &ModelInfo, length_mm: f32) -> Result<(EncodedImage, u32, u32), Failure> {
-    let across = model.printhead_pixels as u32;
-    let along = (length_mm * model.dots_per_mm()).round() as u32;
+fn encode_for(
+    model: &ModelInfo,
+    size: Option<LabelSize>,
+) -> Result<(EncodedImage, u32, u32), Failure> {
+    let dpmm = model.dots_per_mm();
+    let across = match size {
+        Some(s) => (s.across_mm * dpmm).round() as u32,
+        None => model.printhead_pixels as u32,
+    };
+    let along = match size {
+        Some(s) => (s.along_mm * dpmm).round() as u32,
+        None => (DEFAULT_LENGTH_MM * dpmm).round() as u32,
+    };
+    if across > model.printhead_pixels as u32 {
+        return Err(format!(
+            "{:.0} mm is wider than this printhead can reach ({:.0} mm)",
+            across as f32 / dpmm,
+            model.max_width_mm()
+        )
+        .into());
+    }
     let img = test_image(across, along, model.print_direction);
     let enc = encode_image(&img, model.printhead_pixels, model.print_direction)?;
     Ok((enc, across, along))
@@ -248,17 +289,18 @@ fn ascii_preview(img: &image::DynamicImage, width: u32) {
     println!("└{}┘", "─".repeat(cols as usize));
 }
 
-fn render_to(path: &str, length_mm: f32) -> Result<(), Failure> {
+fn render_to(path: &str, size: Option<LabelSize>) -> Result<(), Failure> {
     // No printer to ask, so assume the one on the bench.
     let model = by_id(4096).expect("B1");
-    let (enc, across, along) = encode_for(&model, length_mm)?;
+    let (enc, across, along) = encode_for(&model, size)?;
     let img = test_image(across, along, model.print_direction);
     img.save(path)?;
     println!(
-        "wrote {path}  — {} at {} dpi, {:.0} mm across × {length_mm:.0} mm along",
+        "wrote {path}  — {} at {} dpi, {:.1} × {:.1} mm",
         model.name,
         model.dpi,
-        model.max_width_mm()
+        across as f32 / model.dots_per_mm(),
+        along as f32 / model.dots_per_mm()
     );
     describe(&enc, &model);
     ascii_preview(&img, 76);
@@ -448,7 +490,7 @@ async fn probe(port: &str) -> Result<(), Failure> {
     Ok(())
 }
 
-async fn print(port: &str, length_mm: f32, density: Option<u8>) -> Result<(), Failure> {
+async fn print(port: &str, size: Option<LabelSize>, density: Option<u8>) -> Result<(), Failure> {
     println!("opening {port} …");
     let mut t = SerialTransport::open(port)?;
 
@@ -465,7 +507,7 @@ async fn print(port: &str, length_mm: f32, density: Option<u8>) -> Result<(), Fa
         None => 1,
     };
 
-    let (enc, across, along) = encode_for(&model, length_mm)?;
+    let (enc, across, along) = encode_for(&model, size)?;
     println!(
         "{} · {} dpi · head {} px · direction {:?} · label type {} ({})",
         model.name,
@@ -475,7 +517,17 @@ async fn print(port: &str, length_mm: f32, density: Option<u8>) -> Result<(), Fa
         label_type,
         label_type_name(label_type)
     );
-    println!("image {across} × {along} px  ({length_mm:.0} mm along the feed)");
+    println!(
+        "image {across} × {along} px  ({:.1} × {:.1} mm)",
+        across as f32 / model.dots_per_mm(),
+        along as f32 / model.dots_per_mm()
+    );
+    if (across as u16) < model.printhead_pixels {
+        println!(
+            "  note: {} of the head's {} columns are used — where the unused ones sit is what this print reveals",
+            across, model.printhead_pixels
+        );
+    }
     describe(&enc, &model);
     ascii_preview(&test_image(across, along, model.print_direction), 76);
 
