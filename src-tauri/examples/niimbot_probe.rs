@@ -195,6 +195,59 @@ fn describe(enc: &EncodedImage, model: &ModelInfo) {
     }
 }
 
+/// Draw the image into the terminal you are already standing in.
+///
+/// A file is no use on a bench: comparing a label in your hand against a PNG
+/// means finding a viewer, and the thing you are checking — which corner the
+/// wedge is in — survives being squashed to text perfectly well.
+fn ascii_preview(img: &image::DynamicImage, width: u32) {
+    use image::GenericImageView;
+    let (w, h) = img.dimensions();
+    let cols = width.min(w);
+    // Terminal cells are about twice as tall as they are wide.
+    let rows = ((h as f32 / w as f32) * cols as f32 / 2.0).round().max(1.0) as u32;
+    let gray = img.to_luma8();
+
+    println!("┌{}┐", "─".repeat(cols as usize));
+    for r in 0..rows {
+        print!("│");
+        for c in 0..cols {
+            // Sample the block this cell covers; any black in it reads as black,
+            // because a one-pixel line is exactly what must not disappear here.
+            let x0 = c * w / cols;
+            let x1 = ((c + 1) * w / cols).max(x0 + 1).min(w);
+            let y0 = r * h / rows;
+            let y1 = ((r + 1) * h / rows).max(y0 + 1).min(h);
+            let mut dark = 0u32;
+            let mut total = 0u32;
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    total += 1;
+                    if gray.get_pixel(x, y).0[0] != 255 {
+                        dark += 1;
+                    }
+                }
+            }
+            let ratio = if total == 0 {
+                0.0
+            } else {
+                dark as f32 / total as f32
+            };
+            print!(
+                "{}",
+                match ratio {
+                    r if r == 0.0 => ' ',
+                    r if r < 0.25 => '░',
+                    r if r < 0.6 => '▒',
+                    _ => '█',
+                }
+            );
+        }
+        println!("│");
+    }
+    println!("└{}┘", "─".repeat(cols as usize));
+}
+
 fn render_to(path: &str, length_mm: f32) -> Result<(), Failure> {
     // No printer to ask, so assume the one on the bench.
     let model = by_id(4096).expect("B1");
@@ -208,6 +261,7 @@ fn render_to(path: &str, length_mm: f32) -> Result<(), Failure> {
         model.max_width_mm()
     );
     describe(&enc, &model);
+    ascii_preview(&img, 76);
     Ok(())
 }
 
@@ -423,6 +477,7 @@ async fn print(port: &str, length_mm: f32, density: Option<u8>) -> Result<(), Fa
     );
     println!("image {across} × {along} px  ({length_mm:.0} mm along the feed)");
     describe(&enc, &model);
+    ascii_preview(&test_image(across, along, model.print_direction), 76);
 
     let requested = density.unwrap_or(model.density_default);
     let clamped = model.clamp_density(requested);
