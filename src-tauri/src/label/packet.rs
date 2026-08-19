@@ -48,6 +48,10 @@ pub mod resp {
     pub const PAGE_END: u8 = 0xe4;
     pub const PRINT_END: u8 = 0xf4;
     pub const PRINT_STATUS: u8 = 0xb3;
+    pub const PRINT_START: u8 = 0x02;
+    pub const SET_DENSITY: u8 = 0x31;
+    pub const SET_LABEL_TYPE: u8 = 0x33;
+    pub const SET_PAGE_SIZE: u8 = 0x14;
     pub const HEARTBEAT_ADVANCED1: u8 = 0xdd;
     pub const HEARTBEAT_BASIC: u8 = 0xde;
     pub const HEARTBEAT_ADVANCED2: u8 = 0xd9;
