@@ -16,9 +16,12 @@
 //! flows is ported so far; whoever brings the rest over will be reading the
 //! same source, and a port that hides its origin is one they cannot continue.
 
+pub mod commands;
 pub mod encoder;
 pub mod models;
 pub mod packet;
 pub mod serial;
+pub mod status;
 pub mod task;
+pub mod testpage;
 pub mod transport;

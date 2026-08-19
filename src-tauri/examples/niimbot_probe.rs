@@ -5,11 +5,16 @@
 //! queue in the way. When a label comes out wrong, this is what narrows it down
 //! to the printer, the flow, or the raster.
 //!
+//! It reads the printer and draws the pattern through the **same library code
+//! the settings window uses**, so what it shows here is what the app shows
+//! there. Two readers of one device that disagree is a bug that only surfaces
+//! when they disagree.
+//!
 //! ```text
 //! cargo run --example niimbot_probe -- ports
 //! cargo run --example niimbot_probe -- probe COM6
-//! cargo run --example niimbot_probe -- render out.png [length_mm]
-//! cargo run --example niimbot_probe -- print COM6 [length_mm] [density]
+//! cargo run --example niimbot_probe -- render out.png [WxL]
+//! cargo run --example niimbot_probe -- print COM6 [WxL] [density]
 //! ```
 //!
 //! ⚠️ `print` feeds paper. Everything else is read-only.
@@ -19,18 +24,19 @@
 
 use std::time::Duration;
 
-use bamdude_bridge_lib::label::encoder::{encode_image, EncodedImage, PrintDirection};
+use bamdude_bridge_lib::label::encoder::{encode_image, EncodedImage};
 use bamdude_bridge_lib::label::models::{by_id, ModelInfo};
-use bamdude_bridge_lib::label::packet::{cmd, Packet};
+use bamdude_bridge_lib::label::packet::cmd;
 use bamdude_bridge_lib::label::serial::{list_ports, SerialTransport};
-use bamdude_bridge_lib::label::task::{parse_status, print_b1, select_task, PrintOptions};
-use bamdude_bridge_lib::label::transport::Transport;
+use bamdude_bridge_lib::label::status::{read_snapshot, PrinterSnapshot};
+use bamdude_bridge_lib::label::task::{print_b1, select_task, PrintOptions};
+use bamdude_bridge_lib::label::testpage::test_pattern;
 
-/// Deliberately shorter than any cassette we might meet. On a gap-sensed roll
-/// the printer feeds to the next gap regardless, so a short image wastes
-/// nothing and cannot run over onto the following label — which is the right
-/// default when the loaded size is unknown.
+/// Short enough that it cannot run onto the next label whatever is loaded, for
+/// when the cassette size is not given.
 const DEFAULT_LENGTH_MM: f32 = 20.0;
+
+type Failure = Box<dyn std::error::Error>;
 
 /// Label size in millimetres: across the printhead, then along the feed.
 #[derive(Debug, Clone, Copy)]
@@ -52,8 +58,6 @@ fn parse_size(text: &str) -> Option<LabelSize> {
         along_mm: l.trim().parse().ok()?,
     })
 }
-
-type Failure = Box<dyn std::error::Error>;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
@@ -100,7 +104,6 @@ niimbot_probe — bench tool for the label printer port
   print <PORT> [WxL] [1-5]  print the test image (this feeds paper)
 
 WxL is the cassette size in millimetres, e.g. 40x20 — across the head first.
-
 The vendor app holds the port exclusively — close it before using these.
 ";
 
@@ -122,69 +125,7 @@ fn show_ports() {
     println!("\nUSB ports are listed first; Bluetooth ones answer nothing on this path.");
 }
 
-// ── the test pattern ────────────────────────────────────────────────────────
-
-/// `across` is the printhead direction, `along` is the feed direction. Which of
-/// those is the image's width depends on the model, so the caller passes both
-/// and this decides nothing.
-fn test_image(across: u32, along: u32, direction: PrintDirection) -> image::DynamicImage {
-    let (w, h) = match direction {
-        // cols come from the width
-        PrintDirection::Top => (across, along),
-        // cols come from the height — the encoder rotates
-        PrintDirection::Left => (along, across),
-    };
-
-    let mut img = image::GrayImage::from_pixel(w, h, image::Luma([255u8]));
-    let black = image::Luma([0u8]);
-    let mut dot = |x: u32, y: u32| {
-        if x < w && y < h {
-            img.put_pixel(x, y, black);
-        }
-    };
-
-    // Border: a missing edge means the size is wrong.
-    for x in 0..w {
-        for t in 0..3 {
-            dot(x, t);
-            dot(x, h - 1 - t);
-        }
-    }
-    for y in 0..h {
-        for t in 0..3 {
-            dot(t, y);
-            dot(w - 1 - t, y);
-        }
-    }
-
-    // A wedge in ONE corner — the only mark that says which way up it came out.
-    let wedge = (w.min(h) / 4).max(8);
-    for y in 0..wedge {
-        for x in 0..(wedge - y) {
-            dot(6 + x, 6 + y);
-        }
-    }
-
-    // A diagonal: bit-order mistakes bend or stagger it.
-    for i in 0..w.min(h) {
-        dot(i, i);
-        dot(i + 1, i);
-    }
-
-    // A comb of one-pixel lines: the first thing to smear at too high a density.
-    let comb_x = w / 2;
-    for i in 0..12u32 {
-        let x = comb_x + i * 4;
-        for y in (h / 4)..(h * 3 / 4) {
-            dot(x, y);
-        }
-    }
-
-    // An isolated dot, which forces at least one indexed row.
-    dot(w * 3 / 4, h / 2);
-
-    image::DynamicImage::ImageLuma8(img)
-}
+// ── the image ───────────────────────────────────────────────────────────────
 
 fn encode_for(
     model: &ModelInfo,
@@ -207,7 +148,7 @@ fn encode_for(
         )
         .into());
     }
-    let img = test_image(across, along, model.print_direction);
+    let img = test_pattern(across, along, model.print_direction);
     let enc = encode_image(&img, model.printhead_pixels, model.print_direction)?;
     Ok((enc, across, along))
 }
@@ -238,9 +179,9 @@ fn describe(enc: &EncodedImage, model: &ModelInfo) {
 
 /// Draw the image into the terminal you are already standing in.
 ///
-/// A file is no use on a bench: comparing a label in your hand against a PNG
-/// means finding a viewer, and the thing you are checking — which corner the
-/// wedge is in — survives being squashed to text perfectly well.
+/// A file is no use on a bench: comparing a label in your hand against one
+/// means finding a viewer, and the thing being checked — which corner the wedge
+/// is in — survives being squashed to text perfectly well.
 fn ascii_preview(img: &image::DynamicImage, width: u32) {
     use image::GenericImageView;
     let (w, h) = img.dimensions();
@@ -253,14 +194,11 @@ fn ascii_preview(img: &image::DynamicImage, width: u32) {
     for r in 0..rows {
         print!("│");
         for c in 0..cols {
-            // Sample the block this cell covers; any black in it reads as black,
-            // because a one-pixel line is exactly what must not disappear here.
             let x0 = c * w / cols;
             let x1 = ((c + 1) * w / cols).max(x0 + 1).min(w);
             let y0 = r * h / rows;
             let y1 = ((r + 1) * h / rows).max(y0 + 1).min(h);
-            let mut dark = 0u32;
-            let mut total = 0u32;
+            let (mut dark, mut total) = (0u32, 0u32);
             for y in y0..y1 {
                 for x in x0..x1 {
                     total += 1;
@@ -293,7 +231,7 @@ fn render_to(path: &str, size: Option<LabelSize>) -> Result<(), Failure> {
     // No printer to ask, so assume the one on the bench.
     let model = by_id(4096).expect("B1");
     let (enc, across, along) = encode_for(&model, size)?;
-    let img = test_image(across, along, model.print_direction);
+    let img = test_pattern(across, along, model.print_direction);
     img.save(path)?;
     println!(
         "wrote {path}  — {} at {} dpi, {:.1} × {:.1} mm",
@@ -309,92 +247,43 @@ fn render_to(path: &str, size: Option<LabelSize>) -> Result<(), Failure> {
 
 // ── talking to the printer ──────────────────────────────────────────────────
 
-async fn ask(t: &mut SerialTransport, packet: Packet) -> Result<Option<Packet>, Failure> {
-    t.discard_pending().await?;
-    t.write(&packet.to_bytes()?).await?;
-    Ok(t.read_packet(Duration::from_millis(1500)).await.ok())
-}
-
-fn hex(data: &[u8]) -> String {
-    data.iter()
-        .map(|b| format!("{b:02x}"))
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-async fn read_model_id(t: &mut SerialTransport) -> Result<Option<u16>, Failure> {
-    // PrinterInfoType::PrinterModelId = 8.
-    let reply = ask(t, Packet::new(cmd::PRINTER_INFO, vec![8])).await?;
-    Ok(reply.and_then(|p| (p.data.len() >= 2).then(|| u16::from_be_bytes([p.data[0], p.data[1]]))))
-}
-
-/// Cassette tag, laid out exactly as the reference reads it.
-struct Rfid {
-    uuid: String,
-    barcode: String,
-    serial: String,
-    all_paper: i16,
-    used_paper: i16,
-    consumables_type: u8,
-    capacity: Option<i16>,
-}
-
-fn parse_rfid(data: &[u8]) -> Option<Rfid> {
-    if data.len() <= 1 {
-        return None; // no tag present
+fn show_snapshot(s: &PrinterSnapshot) {
+    match (s.model_id, s.model_name) {
+        (Some(id), Some(name)) => println!(
+            "model              {name} (id {id}) · {} dpi · head {} px · density {}-{}",
+            s.dpi.unwrap_or(0),
+            s.printhead_pixels.unwrap_or(0),
+            s.density_min.unwrap_or(0),
+            s.density_max.unwrap_or(0)
+        ),
+        (Some(id), None) => println!("model              id {id} — no ported print flow"),
+        _ => println!("model              no answer"),
     }
-    let mut at = 0usize;
-    let take = |at: &mut usize, n: usize| -> Option<Vec<u8>> {
-        let end = at.checked_add(n)?;
-        let slice = data.get(*at..end)?.to_vec();
-        *at = end;
-        Some(slice)
-    };
-    let uuid = hex(&take(&mut at, 8)?).replace(' ', "");
-
-    let vstring = |at: &mut usize| -> Option<String> {
-        let len = *data.get(*at)? as usize;
-        *at += 1;
-        let bytes = data.get(*at..*at + len)?.to_vec();
-        *at += len;
-        Some(String::from_utf8_lossy(&bytes).into_owned())
-    };
-    let barcode = vstring(&mut at)?;
-    let serial = vstring(&mut at)?;
-
-    let i16_at = |at: &mut usize| -> Option<i16> {
-        let b = data.get(*at..*at + 2)?;
-        *at += 2;
-        Some(i16::from_be_bytes([b[0], b[1]]))
-    };
-    let all_paper = i16_at(&mut at)?;
-    let used_paper = i16_at(&mut at)?;
-    let consumables_type = *data.get(at)?;
-    at += 1;
-    let capacity = i16_at(&mut at);
-
-    Some(Rfid {
-        uuid,
-        barcode,
-        serial,
-        all_paper,
-        used_paper,
-        consumables_type,
-        capacity,
-    })
-}
-
-fn label_type_name(t: u8) -> &'static str {
-    match t {
-        1 => "WithGaps",
-        2 => "Black",
-        3 => "Continuous",
-        4 => "Perforated",
-        5 => "Transparent",
-        6 => "PvcTag",
-        10 => "BlackMarkGap",
-        11 => "HeatShrinkTube",
-        _ => "unknown",
+    if let Some(v) = &s.firmware {
+        println!("firmware           {v}");
+    }
+    if let Some(v) = &s.serial {
+        println!("serial             {v}");
+    }
+    if let Some(h) = &s.heartbeat {
+        println!(
+            "state              lid closed {:?} · charge {:?} · paper in {:?} · tag read {:?}",
+            h.lid_closed, h.charge_level, h.paper_inserted, h.tag_read
+        );
+    }
+    match &s.cassette {
+        Some(c) => {
+            println!(
+                "cassette           barcode {} · {}",
+                c.barcode, c.consumable_name
+            );
+            println!(
+                "                   {} of {} used · capacity {:?} · serial {}",
+                c.used, c.total, c.capacity, c.serial
+            );
+            println!("\n⚠️ The tag carries no size in millimetres — that comes from the barcode.");
+        }
+        None => println!("cassette           no tag present"),
     }
 }
 
@@ -402,90 +291,8 @@ async fn probe(port: &str) -> Result<(), Failure> {
     println!("opening {port} …");
     let mut t = SerialTransport::open(port)?;
     println!("open.\n");
-
-    match read_model_id(&mut t).await? {
-        Some(id) => match by_id(id) {
-            Some(m) => println!(
-                "model id {id} → {} · {} dpi ({:.1} dots/mm) · head {} px ({:.0} mm) · direction {:?} · density {}-{}",
-                m.name, m.dpi, m.dots_per_mm(), m.printhead_pixels, m.max_width_mm(),
-                m.print_direction, m.density_min, m.density_max
-            ),
-            None => println!("model id {id} → not a model with a ported print flow"),
-        },
-        None => println!("model id → no answer"),
-    }
-
-    for (ty, label) in [(9u8, "software version"), (11, "serial number")] {
-        if let Some(p) = ask(&mut t, Packet::new(cmd::PRINTER_INFO, vec![ty])).await? {
-            let text = String::from_utf8_lossy(&p.data);
-            let printable = text.chars().all(|c| c.is_ascii_graphic());
-            println!(
-                "{label:<18} {}",
-                if printable {
-                    text.into_owned()
-                } else {
-                    hex(&p.data)
-                }
-            );
-        }
-    }
-
-    if let Some(p) = ask(&mut t, Packet::new(cmd::HEARTBEAT, vec![1])).await? {
-        // The 13-byte form is the B1's; field offsets follow the payload
-        // length, not the model, exactly as the reference does it.
-        if p.data.len() == 13 {
-            println!(
-                "heartbeat          lid closed {} · charge {} · paper in {} · tag read {}",
-                p.data[9] == 0,
-                p.data[10],
-                p.data[11] == 0,
-                p.data[12] != 0
-            );
-        } else {
-            println!(
-                "heartbeat          {} bytes: {}",
-                p.data.len(),
-                hex(&p.data)
-            );
-        }
-    }
-
-    if let Some(p) = ask(&mut t, Packet::new(cmd::RFID_INFO, vec![1])).await? {
-        match parse_rfid(&p.data) {
-            Some(r) => {
-                println!(
-                    "cassette           barcode {} · serial {}",
-                    r.barcode, r.serial
-                );
-                println!(
-                    "                   {} of {} used · capacity {} · type {} ({})",
-                    r.used_paper,
-                    r.all_paper,
-                    r.capacity
-                        .map(|c| c.to_string())
-                        .unwrap_or_else(|| "—".into()),
-                    r.consumables_type,
-                    label_type_name(r.consumables_type)
-                );
-                println!("                   uuid {}", r.uuid);
-                println!(
-                    "\n⚠️ The tag carries no size in millimetres — that comes from the barcode."
-                );
-            }
-            None => println!("cassette           no tag present"),
-        }
-    }
-
-    if let Some(p) = ask(&mut t, Packet::new(cmd::PRINT_STATUS, vec![1])).await? {
-        match parse_status(&p.data) {
-            Ok(s) => println!(
-                "print status       page {} · print {}% · feed {}%",
-                s.page, s.print_progress, s.feed_progress
-            ),
-            Err(e) => println!("print status       unparsed: {e}"),
-        }
-    }
-
+    let snapshot = read_snapshot(&mut t).await?;
+    show_snapshot(&snapshot);
     println!("\nNothing above fed any paper.");
     Ok(())
 }
@@ -494,28 +301,23 @@ async fn print(port: &str, size: Option<LabelSize>, density: Option<u8>) -> Resu
     println!("opening {port} …");
     let mut t = SerialTransport::open(port)?;
 
-    let model_id = read_model_id(&mut t)
-        .await?
+    let snapshot = read_snapshot(&mut t).await?;
+    let model_id = snapshot
+        .model_id
         .ok_or("the printer did not say what model it is")?;
     let model = by_id(model_id).ok_or(format!("model id {model_id} has no ported print flow"))?;
     select_task(model_id, None).ok_or(format!("no print flow for model id {model_id}"))?;
 
-    // Take the loaded consumable's type from the tag rather than assuming a
-    // gapped roll; a continuous roll told to look for gaps feeds and feeds.
-    let label_type = match ask(&mut t, Packet::new(cmd::RFID_INFO, vec![1])).await? {
-        Some(p) => parse_rfid(&p.data).map(|r| r.consumables_type).unwrap_or(1),
-        None => 1,
-    };
+    let label_type = snapshot
+        .cassette
+        .as_ref()
+        .map(|c| c.consumable_type)
+        .unwrap_or(1);
 
     let (enc, across, along) = encode_for(&model, size)?;
     println!(
-        "{} · {} dpi · head {} px · direction {:?} · label type {} ({})",
-        model.name,
-        model.dpi,
-        model.printhead_pixels,
-        model.print_direction,
-        label_type,
-        label_type_name(label_type)
+        "{} · {} dpi · head {} px · direction {:?} · label type {}",
+        model.name, model.dpi, model.printhead_pixels, model.print_direction, label_type
     );
     println!(
         "image {across} × {along} px  ({:.1} × {:.1} mm)",
@@ -524,12 +326,12 @@ async fn print(port: &str, size: Option<LabelSize>, density: Option<u8>) -> Resu
     );
     if (across as u16) < model.printhead_pixels {
         println!(
-            "  note: {} of the head's {} columns are used — where the unused ones sit is what this print reveals",
+            "  note: {} of the head's {} columns are used — the head aligns to its edge",
             across, model.printhead_pixels
         );
     }
     describe(&enc, &model);
-    ascii_preview(&test_image(across, along, model.print_direction), 76);
+    ascii_preview(&test_pattern(across, along, model.print_direction), 76);
 
     let requested = density.unwrap_or(model.density_default);
     let clamped = model.clamp_density(requested);

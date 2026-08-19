@@ -13,6 +13,18 @@ pub struct Settings {
     /// Stored without a trailing slash; [`Settings::endpoint`] adds the path.
     pub server_url: String,
 
+    /// Whether this machine does label printing at all.
+    ///
+    /// ⚠️ Off by default and separate from everything else. A bridge installed
+    /// only to catch plates from the slicer should not open serial ports, and
+    /// somebody with no label printer should not be asked about one.
+    pub label_enabled: bool,
+
+    /// Serial port the label printer is on, e.g. `COM6`. Chosen from an
+    /// enumeration in the window rather than typed, because the name means
+    /// nothing without the description beside it.
+    pub label_port: String,
+
     /// API key (`bb_…`) with the library-upload scope.
     ///
     /// ⚠️ **Stored in plaintext in the config file today.** The right home on
@@ -207,9 +219,13 @@ mod tests {
 
     #[test]
     fn endpoint_joins_without_doubling_the_slash() {
+        // `..Default::default()` rather than every field: this test is about
+        // joining a URL, and it should not need editing every time the struct
+        // grows a field that has nothing to do with that.
         let settings = Settings {
             server_url: String::from("http://host:8000/"),
             api_key: String::from("bb_x"),
+            ..Default::default()
         };
         assert_eq!(
             settings.endpoint("/api/v1/library/files"),
@@ -222,7 +238,31 @@ mod tests {
         let settings = Settings {
             server_url: String::from("http://host:8000"),
             api_key: String::from("   "),
+            ..Default::default()
         };
         assert!(!settings.is_complete());
+    }
+
+    #[test]
+    fn label_printing_is_off_until_somebody_switches_it_on() {
+        // A bridge installed only to catch plates from the slicer must not open
+        // serial ports, and somebody with no label printer must not be asked
+        // about one.
+        let fresh = Settings::default();
+        assert!(!fresh.label_enabled);
+        assert!(fresh.label_port.is_empty());
+    }
+
+    #[test]
+    fn the_two_roles_are_independent_of_each_other() {
+        // Label printing configured, server not: still a valid state, because
+        // the printer is reachable and testable without one.
+        let labels_only = Settings {
+            label_enabled: true,
+            label_port: String::from("COM6"),
+            ..Default::default()
+        };
+        assert!(!labels_only.is_complete(), "no server is still no server");
+        assert!(labels_only.label_enabled);
     }
 }

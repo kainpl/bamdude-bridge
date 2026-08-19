@@ -18,7 +18,7 @@ const BAUD: u32 = 115_200;
 /// Per-read timeout inside the loop; the caller's timeout bounds the whole wait.
 const READ_CHUNK_TIMEOUT: Duration = Duration::from_millis(100);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct PortInfo {
     pub name: String,
     pub description: String,

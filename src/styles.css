@@ -72,7 +72,8 @@ label {
   font-weight: 500;
 }
 
-input {
+input,
+select {
   padding: 9px 11px;
   border: 1px solid var(--line);
   border-radius: 7px;
@@ -81,7 +82,15 @@ input {
   font: inherit;
 }
 
-input:focus-visible {
+/* The popup list is drawn by the OS, which does not inherit the page's colours
+   — without this the options are black-on-black under a dark theme. */
+select option {
+  background: var(--bg);
+  color: inherit;
+}
+
+input:focus-visible,
+select:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }

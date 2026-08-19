@@ -5,6 +5,60 @@ import { listen } from "@tauri-apps/api/event";
 interface Settings {
   server_url: string;
   api_key: string;
+  label_enabled: boolean;
+  label_port: string;
+}
+
+/** Mirrors `label::serial::PortInfo`. */
+interface PortInfo {
+  name: string;
+  description: string;
+  usb: boolean;
+}
+
+/** Mirrors `label::commands::PortsResult`. */
+interface PortsResult {
+  ports: PortInfo[];
+  note: string;
+}
+
+/** Mirrors `label::status::Heartbeat`. Every field is optional because a
+ *  printer that answers one question and not another is normal, and showing it
+ *  half-filled is more use than refusing the lot. */
+interface Heartbeat {
+  lid_closed: boolean | null;
+  charge_level: number | null;
+  paper_inserted: boolean | null;
+  tag_read: boolean | null;
+}
+
+/** Mirrors `label::status::Cassette`. Note what is absent: no size in
+ *  millimetres, because the tag does not carry one. */
+interface Cassette {
+  uuid: string;
+  barcode: string;
+  serial: string;
+  total: number;
+  used: number;
+  consumable_type: number;
+  consumable_name: string;
+  capacity: number | null;
+}
+
+/** Mirrors `label::status::PrinterSnapshot`. */
+interface PrinterSnapshot {
+  model_id: number | null;
+  model_name: string | null;
+  supported: boolean;
+  dpi: number | null;
+  printhead_pixels: number | null;
+  density_min: number | null;
+  density_max: number | null;
+  density_default: number | null;
+  firmware: string | null;
+  serial: string | null;
+  heartbeat: Heartbeat | null;
+  cassette: Cassette | null;
 }
 
 /** Mirrors `HandoverStatus` in lib.rs — kept in the same shape deliberately. */
@@ -27,7 +81,12 @@ interface Registration {
   elevated: boolean;
 }
 
-const EMPTY: Settings = { server_url: "", api_key: "" };
+const EMPTY: Settings = {
+  server_url: "",
+  api_key: "",
+  label_enabled: false,
+  label_port: "",
+};
 
 export function App() {
   const [settings, setSettings] = useState<Settings>(EMPTY);
@@ -177,6 +236,22 @@ export function App() {
         />
       )}
 
+      <LabelPrinterSection
+        settings={settings}
+        busy={busy}
+        onChange={(next) => {
+          // A toggle and a dropdown are discrete choices, so they persist the
+          // moment they are made. The Save button above exists for the text
+          // fields, where saving half a typed URL would be wrong.
+          setSettings(next);
+          void run(async () => {
+            await invoke("save_settings", { settings: next });
+            return "Saved.";
+          });
+        }}
+        onMessage={setMessage}
+      />
+
       {message && <p className={message.tone === "ok" ? "ok" : "bad"}>{message.text}</p>}
     </main>
   );
@@ -262,6 +337,186 @@ function ReceiverSection({
         </small>
       )}
     </section>
+  );
+}
+
+/**
+ * The label-printer role: switch it on, pick the device, see what it is.
+ *
+ * ⚠️ There is deliberately no paper-size field and no density field here. Both
+ * are inputs to the image, the image is made on the server, and a size settable
+ * in two places becomes two sizes — of which the server's is the one the image
+ * was actually drawn to. This section reads and reports; it does not decide.
+ */
+function LabelPrinterSection({
+  settings,
+  busy,
+  onChange,
+  onMessage,
+}: {
+  settings: Settings;
+  busy: boolean;
+  onChange: (next: Settings) => void;
+  onMessage: (message: { tone: "ok" | "bad"; text: string } | null) => void;
+}) {
+  const [ports, setPorts] = useState<PortsResult | null>(null);
+  const [snapshot, setSnapshot] = useState<PrinterSnapshot | null>(null);
+  const [reading, setReading] = useState(false);
+
+  const refreshPorts = useCallback(() => {
+    invoke<PortsResult>("label_list_ports").then(setPorts).catch(() => setPorts(null));
+  }, []);
+
+  useEffect(() => {
+    if (settings.label_enabled) refreshPorts();
+  }, [settings.label_enabled, refreshPorts]);
+
+  // The printer is forgotten whenever the port changes: what was read belongs
+  // to the device that was asked, and showing it beside a different port would
+  // describe the wrong machine.
+  useEffect(() => setSnapshot(null), [settings.label_port]);
+
+  async function readPrinter() {
+    setReading(true);
+    onMessage(null);
+    try {
+      setSnapshot(await invoke<PrinterSnapshot>("label_read_status", { port: settings.label_port }));
+    } catch (error: unknown) {
+      setSnapshot(null);
+      onMessage({ tone: "bad", text: String(error) });
+    } finally {
+      setReading(false);
+    }
+  }
+
+  async function testPrint() {
+    setReading(true);
+    onMessage(null);
+    try {
+      const text = await invoke<string>("label_test_print", { port: settings.label_port });
+      onMessage({ tone: "ok", text });
+    } catch (error: unknown) {
+      onMessage({ tone: "bad", text: String(error) });
+    } finally {
+      setReading(false);
+    }
+  }
+
+  const chosen = settings.label_port.trim() !== "";
+  const working = busy || reading;
+
+  return (
+    <section className="panel">
+      <h2>Label printer on this machine</h2>
+
+      <label className="confirm">
+        <input
+          type="checkbox"
+          checked={settings.label_enabled}
+          onChange={(event) => onChange({ ...settings, label_enabled: event.target.checked })}
+        />
+        Print labels on a printer attached to this computer
+      </label>
+      <small>
+        Off unless you have one. BamDude composes the label; this app puts it on the printer plugged
+        in here, which a server on another machine cannot reach at all.
+      </small>
+
+      {settings.label_enabled && (
+        <>
+          <label>
+            Serial port
+            <select
+              value={settings.label_port}
+              onChange={(event) => onChange({ ...settings, label_port: event.target.value })}
+            >
+              <option value="">Choose a port…</option>
+              {ports?.ports.map((port) => (
+                <option key={port.name} value={port.name}>
+                  {port.name} — {port.description}
+                  {port.usb ? "" : " (not USB)"}
+                </option>
+              ))}
+            </select>
+            <small>
+              {ports?.ports.length === 0
+                ? "No serial ports found. Is the printer plugged in and switched on?"
+                : "USB devices are listed first; the Bluetooth entries Windows always carries answer nothing here."}
+            </small>
+          </label>
+
+          {ports?.note && <small>{ports.note}</small>}
+
+          <div className="row">
+            <button type="button" disabled={working} onClick={refreshPorts}>
+              Refresh ports
+            </button>
+            <button type="button" disabled={working || !chosen} onClick={() => void readPrinter()}>
+              Read printer
+            </button>
+            <button type="button" disabled={working || !chosen} onClick={() => void testPrint()}>
+              Test print
+            </button>
+          </div>
+
+          {snapshot && <PrinterFacts snapshot={snapshot} />}
+        </>
+      )}
+    </section>
+  );
+}
+
+function PrinterFacts({ snapshot }: { snapshot: PrinterSnapshot }) {
+  const { heartbeat: hb, cassette } = snapshot;
+  const yesNo = (value: boolean | null, yes: string, no: string) =>
+    value === null ? null : value ? yes : no;
+
+  return (
+    <>
+      <ul className="state">
+        <li className={snapshot.supported ? "ok" : undefined}>
+          {snapshot.model_name
+            ? `${snapshot.model_name} — ${snapshot.dpi} dpi, ${snapshot.printhead_pixels} dots across, density ${snapshot.density_min}–${snapshot.density_max}.`
+            : snapshot.model_id !== null
+              ? `The printer reports model ${snapshot.model_id}, which this app cannot print on yet.`
+              : "The printer did not say what model it is."}
+        </li>
+        {snapshot.firmware && (
+          <li>
+            Firmware {snapshot.firmware}
+            {snapshot.serial && ` · serial ${snapshot.serial}`}
+          </li>
+        )}
+        {hb && (
+          <li className={hb.paper_inserted ? "ok" : undefined}>
+            {[
+              yesNo(hb.paper_inserted, "Paper loaded", "No paper"),
+              yesNo(hb.lid_closed, "lid closed", "lid open"),
+              hb.charge_level !== null ? `charge ${hb.charge_level}` : null,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </li>
+        )}
+      </ul>
+
+      {cassette ? (
+        <div className="card">
+          <strong>Cassette {cassette.barcode}</strong>
+          <br />
+          {cassette.consumable_name} · {cassette.used} of {cassette.total} used
+          <br />
+          {/* Said out loud because it is the question everyone asks next, and
+              the honest answer is that the printer genuinely does not know. */}
+          <small>
+            The cassette does not report its size in millimetres — no Niimbot tag does. BamDude
+            resolves that from the barcode above, and asks you once for a size it has not seen.
+          </small>
+        </div>
+      ) : (
+        <div className="card">No cassette tag detected.</div>
+      )}
+    </>
   );
 }
 

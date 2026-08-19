@@ -81,11 +81,28 @@ The device state is read **before** each poll rather than on a separate schedule
 
 ⚠️ **A printer that is unplugged is not an error state to hide.** The poll still goes out, with `printer_reachable: false`. BamDude showing "bridge alive, printer gone" is worth more than silence, and it is the difference between "your USB cable" and "your server".
 
+### Component 4a — report capabilities, decide nothing
+
+The poll carries the printer's `model_id`, resolution, printhead width and density range alongside the state. The server stores them and uses them to bound its own controls.
+
+The split this follows from, stated once because every later question resolves against it: **the bridge reads and reports; it does not decide.** Its only decisions are about the machine it lives on — which port, whether the printer answers, whether this role is switched on at all.
+
+So density is chosen on the server and arrives with the job; the bridge clamps it to what the model accepts and prints. Label size in millimetres never reaches the bridge as a setting either — it is an input to the raster, and the raster is made on the server.
+
+⚠️ **The window must not offer a paper-size field.** The temptation is real, since the bridge is what reads the cassette tag. But a size settable in two places becomes two sizes, and the one that is right will be the server's, because that is the one the image was drawn to. The bridge shows what the tag says and stays quiet.
+
 ### Component 5 — settings and window
 
 New settings: label role on/off, transport, port, and the `installation_id` — a UUID generated once on first use and never regenerated. It is what identifies the device row on the server; regenerating it would silently orphan the paired device and create a second one waiting for approval.
 
-The window gains a second tab: transport and port, a **Test print**, and the current state as the bridge sees it. Test print is not a nicety — it separates "the printer works" from "the queue works", which are the two things anybody debugging this needs told apart.
+The window gains a second section, and it has exactly four jobs:
+
+1. **Switch the role on.** Off by default — a bridge installed for the slicer handover alone should not open serial ports, and someone with no label printer should not be asked about one.
+2. **Choose the device.** Ports come from an enumeration, not a text box, ranked so a USB device sits above the Bluetooth ports every Windows machine carries.
+3. **Show what the printer says it is** — model, firmware, serial, and the capabilities being reported upward, so "unsupported model" can be read rather than guessed at.
+4. **Show what is loaded and how it is doing** — cassette barcode, consumable type, how much is used, paper present, charge.
+
+Plus a **Test print**, which is not a nicety: it separates "the printer works" from "the queue works", the two things anybody debugging this needs told apart. It prints at the printhead's width and a short fixed length, and **deliberately does not need to know the label size** — proving the printer is alive requires no such fact, and inventing one here would be inventing the server's.
 
 ### Component 6 — decouple autostart from protocol registration
 
