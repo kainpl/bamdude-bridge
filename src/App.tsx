@@ -81,6 +81,9 @@ interface Registration {
   elevated: boolean;
 }
 
+/** The two roles, which share only a server address and a window. */
+type Tab = "files" | "labels";
+
 const EMPTY: Settings = {
   server_url: "",
   api_key: "",
@@ -95,6 +98,7 @@ export function App() {
   const [message, setMessage] = useState<{ tone: "ok" | "bad"; text: string } | null>(null);
   const [handover, setHandover] = useState<Handover | null>(null);
   const [version, setVersion] = useState<string | null>(null);
+  const [tab, setTab] = useState<Tab>("files");
 
   const refreshRegistration = useCallback(() => {
     invoke<Registration>("registration_status").then(setRegistration).catch(() => {
@@ -217,40 +221,73 @@ export function App() {
         </div>
       </form>
 
-      {registration && (
-        <ReceiverSection
-          registration={registration}
+      {/* Two roles, two tabs. The server address above stays outside them
+          because both use it — putting it inside the slicer tab would say it
+          belonged to the slicer. */}
+      <nav className="tabs" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "files"}
+          onClick={() => setTab("files")}
+        >
+          Files from BambuStudio
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "labels"}
+          onClick={() => setTab("labels")}
+        >
+          Label printer
+          {settings.label_enabled && <span className="dot" aria-label="on" />}
+        </button>
+      </nav>
+
+      {tab === "files" &&
+        (registration ? (
+          <ReceiverSection
+            registration={registration}
+            busy={busy}
+            onRegister={() =>
+              void run(async () => {
+                setRegistration(await invoke<Registration>("register_receiver"));
+                return "Registered. Restart BambuStudio to see the menu entry.";
+              })
+            }
+            onUnregister={() =>
+              void run(async () => {
+                setRegistration(await invoke<Registration>("unregister_receiver"));
+                return "Removed.";
+              })
+            }
+          />
+        ) : (
+          <section className="panel">
+            <h2>Receiving files from BambuStudio</h2>
+            <small>
+              Only available on Windows — Bambu never implemented the hand-off on any other system.
+            </small>
+          </section>
+        ))}
+
+      {tab === "labels" && (
+        <LabelPrinterSection
+          settings={settings}
           busy={busy}
-          onRegister={() =>
+          onChange={(next) => {
+            // A toggle and a dropdown are discrete choices, so they persist the
+            // moment they are made. The Save button above exists for the text
+            // fields, where saving half a typed URL would be wrong.
+            setSettings(next);
             void run(async () => {
-              setRegistration(await invoke<Registration>("register_receiver"));
-              return "Registered. Restart BambuStudio to see the menu entry.";
-            })
-          }
-          onUnregister={() =>
-            void run(async () => {
-              setRegistration(await invoke<Registration>("unregister_receiver"));
-              return "Removed.";
-            })
-          }
+              await invoke("save_settings", { settings: next });
+              return "Saved.";
+            });
+          }}
+          onMessage={setMessage}
         />
       )}
-
-      <LabelPrinterSection
-        settings={settings}
-        busy={busy}
-        onChange={(next) => {
-          // A toggle and a dropdown are discrete choices, so they persist the
-          // moment they are made. The Save button above exists for the text
-          // fields, where saving half a typed URL would be wrong.
-          setSettings(next);
-          void run(async () => {
-            await invoke("save_settings", { settings: next });
-            return "Saved.";
-          });
-        }}
-        onMessage={setMessage}
-      />
 
       {message && <p className={message.tone === "ok" ? "ok" : "bad"}>{message.text}</p>}
     </main>
