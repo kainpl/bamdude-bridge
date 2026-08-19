@@ -60,6 +60,9 @@ pub mod mock {
         queued: VecDeque<Packet>,
         /// Non-zero makes the status packet carry a printer-side error.
         status_error: u8,
+        /// Answer PageEnd with a check-line packet *before* the real reply,
+        /// which is what a real B1 does.
+        noisy_page_end: bool,
     }
 
     impl FakeTransport {
@@ -72,6 +75,16 @@ pub mod mock {
                 silent: false,
                 queued: VecDeque::new(),
                 status_error: 0,
+                noisy_page_end: false,
+            }
+        }
+
+        /// A printer that sends PrinterCheckLine before In_PageEnd — measured
+        /// on a real B1.
+        pub fn like_a_real_b1() -> Self {
+            Self {
+                noisy_page_end: true,
+                ..Self::answering_status_after(1)
             }
         }
 
@@ -104,7 +117,13 @@ pub mod mock {
                 cmd::SET_PAGE_SIZE => resp::SET_PAGE_SIZE,
                 cmd::PRINT_START => resp::PRINT_START,
                 cmd::PAGE_START => resp::PAGE_START,
-                cmd::PAGE_END => resp::PAGE_END,
+                cmd::PAGE_END => {
+                    if self.noisy_page_end {
+                        self.queued
+                            .push_back(Packet::new(resp::PRINTER_CHECK_LINE, vec![0, 0, 1]));
+                    }
+                    resp::PAGE_END
+                }
                 cmd::PRINT_END => resp::PRINT_END,
                 cmd::PRINT_STATUS => {
                     self.status_polls += 1;

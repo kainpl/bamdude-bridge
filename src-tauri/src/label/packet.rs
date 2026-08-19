@@ -43,6 +43,12 @@ pub mod cmd {
 /// Responses the bridge reads. Values from `ResponseCommandId`.
 pub mod resp {
     pub const NOT_SUPPORTED: u8 = 0x00;
+    /// The printer refusing the job outright, as its own packet.
+    pub const PRINT_ERROR: u8 = 0xdb;
+    /// ⚠️ Some printers — the B1 among them, measured — send this after
+    /// `PageEnd` **in addition to** the reply that command asks for. It is
+    /// noise to step over, not an answer and not a failure.
+    pub const PRINTER_CHECK_LINE: u8 = 0xd3;
     pub const CONNECT: u8 = 0xc2;
     pub const PAGE_START: u8 = 0x04;
     pub const PAGE_END: u8 = 0xe4;

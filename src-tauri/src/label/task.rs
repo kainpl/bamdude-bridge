@@ -8,7 +8,7 @@
 //! [`select_task`] for why an unported model is refused rather than routed to
 //! the nearest thing.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::encoder::EncodedImage;
 use super::packet::{cmd, resp, Packet, PacketError};
@@ -260,8 +260,15 @@ pub fn parse_status(data: &[u8]) -> Result<PrintStatus, PrintError> {
     })
 }
 
-/// Send a packet and read the reply, refusing anything that is not one of the
-/// answers this command has.
+/// Send a packet and wait for one of the answers this command has.
+///
+/// ⚠️ **Unmatched packets are stepped over, not treated as failures.** A B1
+/// answers `PageEnd` with `PrinterCheckLine` *as well as* the reply the command
+/// asks for, and rejecting whichever arrived first turns a healthy printer into
+/// an error — measured on hardware, and the reference behaves the same way: it
+/// keeps listening until a valid id shows up or the timeout runs out.
+///
+/// The two exceptions are the printer's own refusals, which are answers.
 async fn expect<T: Transport + ?Sized>(
     transport: &mut T,
     packet: Packet,
@@ -274,18 +281,34 @@ async fn expect<T: Transport + ?Sized>(
 
     let sent = packet.command;
     transport.write(&packet.to_bytes()?).await?;
-    let reply = transport.read_packet(timeout).await?;
 
-    if reply.command == resp::NOT_SUPPORTED {
-        return Err(PrintError::NotSupported);
+    let deadline = Instant::now() + timeout;
+    let mut stepped_over: Vec<u8> = Vec::new();
+
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(PrintError::UnexpectedReply {
+                sent,
+                got: stepped_over.last().copied().unwrap_or(0),
+            });
+        }
+
+        let reply = transport.read_packet(remaining).await?;
+
+        if reply.command == resp::NOT_SUPPORTED {
+            return Err(PrintError::NotSupported);
+        }
+        if reply.command == resp::PRINT_ERROR {
+            return Err(PrintError::Printer(
+                reply.data.first().copied().unwrap_or(0),
+            ));
+        }
+        if valid.contains(&reply.command) {
+            return Ok(reply);
+        }
+        stepped_over.push(reply.command);
     }
-    if !valid.contains(&reply.command) {
-        return Err(PrintError::UnexpectedReply {
-            sent,
-            got: reply.command,
-        });
-    }
-    Ok(reply)
 }
 
 #[cfg(test)]
@@ -383,6 +406,17 @@ mod tests {
         let mut t = FakeTransport::answering_status_after(3);
         print_b1(&mut t, &tiny_image(), &fast()).await.unwrap();
         assert!(t.status_polls >= 3);
+    }
+
+    #[tokio::test]
+    async fn a_page_end_answered_with_a_check_line_first_still_completes() {
+        // Measured on a real B1: closing the page produces PrinterCheckLine
+        // (0xd3) as well as In_PageEnd (0xe4). Treating whichever arrived first
+        // as *the* answer turns a healthy printer into "expected a reply to
+        // 0xe3, got 0xd3" — which is exactly what the first hardware run said.
+        let mut t = FakeTransport::like_a_real_b1();
+        print_b1(&mut t, &tiny_image(), &fast()).await.unwrap();
+        assert!(t.commands_sent().contains(&cmd::PRINT_END));
     }
 
     #[tokio::test]
