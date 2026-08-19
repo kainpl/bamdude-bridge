@@ -23,6 +23,7 @@
 
 pub mod config;
 pub mod farm_client_url;
+pub mod label;
 #[cfg(windows)]
 pub mod registry;
 pub mod tray;
