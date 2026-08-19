@@ -491,6 +491,22 @@ mod tests {
         assert!(matches!(poll_once(&server.url(), "key", &report()).await.unwrap(), PollOutcome::Idle));
     }
 
+    #[test]
+    fn the_server_sets_the_cadence_but_only_within_our_bounds() {
+        assert_eq!(clamp_retry_after(Some(5)), Duration::from_secs(5));
+        assert_eq!(clamp_retry_after(Some(0)), Duration::ZERO, "0 after a job drains a batch");
+        assert_eq!(clamp_retry_after(Some(86_400)), MAX_POLL_INTERVAL);
+        assert_eq!(clamp_retry_after(None), DEFAULT_POLL_INTERVAL);
+    }
+
+    #[test]
+    fn a_hostile_retry_after_cannot_make_us_hammer() {
+        // Negative, absurd, or unparseable all land on the default rather than
+        // on a busy loop against somebody's server.
+        assert_eq!(clamp_retry_after_raw("-1"), DEFAULT_POLL_INTERVAL);
+        assert_eq!(clamp_retry_after_raw("soon"), DEFAULT_POLL_INTERVAL);
+    }
+
     #[tokio::test]
     async fn a_409_means_the_feature_is_off_and_we_back_off_hard() {
         let server = stub_answering(409, r#"{"detail":"device_labels_disabled"}"#);
@@ -537,7 +553,9 @@ mod tests {
 
 - [ ] **Step 2: Run to verify it fails, then implement**
 
-The cycle: read device state (or report `printer_reachable: false`) → `POST /api/v1/label-devices/poll` → on `200`, decode, encode, print, `POST …/jobs/{id}/result` → on `204`, loop → on `409`, long back-off → on transport error, exponential back-off to a ceiling with the tray tooltip updated.
+The cycle: read device state (or report `printer_reachable: false`) → `POST /api/v1/label-devices/poll` → on `200`, decode, encode, print, `POST …/jobs/{id}/result` → on `204`, nothing to do → on `409`, the feature is off → then sleep for `Retry-After` clamped to `[MIN_POLL_INTERVAL, MAX_POLL_INTERVAL]` → on transport error, exponential back-off to a ceiling with the tray tooltip updated.
+
+⚠️ **`Retry-After` is a hint from the server, not an instruction.** Clamp it. An absent, negative, absurd or unparseable value falls back to `DEFAULT_POLL_INTERVAL`; a zero is honoured, because that is how a batch drains at printer speed.
 
 ⚠️ `installation_id` is generated **once**, on first use, and stored in `settings.json`. It is what identifies the device row on the server; regenerating it orphans the paired device and creates a second one waiting for approval. There must be exactly one code path that can write it, and it must refuse to overwrite a non-empty value.
 

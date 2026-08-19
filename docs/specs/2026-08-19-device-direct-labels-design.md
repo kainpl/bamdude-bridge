@@ -71,8 +71,11 @@ A tokio task, started when the app starts and the label role is configured:
 
 1. Read the printer's state — model, cassette RFID, paper, battery. Cheap, and it is what the server wants in the request body anyway.
 2. `POST /label-devices/poll` with that state.
-3. `200` → print it, then `POST …/jobs/{id}/result`. `204` → straight back to step 1. `409` → the subsystem is off server-side; back off hard, this is not an error to retry tightly.
-4. Network failure → exponential backoff with a ceiling, and the tray tooltip says so.
+3. `200` → print it, then `POST …/jobs/{id}/result`. `204` → nothing to do. `409` → the subsystem is off server-side.
+4. Sleep for the response's `Retry-After`, clamped between a floor and a ceiling of the bridge's own. The server sets the cadence; the clamp exists so a misconfigured or hostile answer can neither make us hammer nor make us sleep forever.
+5. Network failure → exponential backoff with a ceiling, and the tray tooltip says so.
+
+The poll returns immediately — **there is no long-poll to wait on**, which is why the HTTP client keeps ordinary short timeouts and a slow response is unambiguously a slow server rather than one holding the request open. `Retry-After: 0` follows a delivered job, so a batch drains at printer speed.
 
 The device state is read **before** each poll rather than on a separate schedule, so BamDude's view of the cassette can never be more stale than one poll.
 
