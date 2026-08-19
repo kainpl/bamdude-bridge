@@ -236,7 +236,7 @@ fn ascii_preview(img: &image::DynamicImage, width: u32) {
             print!(
                 "{}",
                 match ratio {
-                    r if r == 0.0 => ' ',
+                    0.0 => ' ',
                     r if r < 0.25 => '░',
                     r if r < 0.6 => '▒',
                     _ => '█',
