@@ -73,27 +73,30 @@ pub enum PrintError {
 
 /// Which flow a printer needs, or `None` if it has not been ported.
 ///
-/// Resolution order matters and is the reference's: a (model, protocol version)
-/// pair wins over the bare model, because one model on two firmwares can need
-/// two different flows.
+/// Keyed on the **model id the printer reports**, not on a name: a name is ours
+/// to display and never something the device sends.
+///
+/// Resolution order is the reference's — a (model, protocol version) pair wins
+/// over the bare model, because one model on two firmwares can need two
+/// different flows.
 ///
 /// ⚠️ **`None` is a feature, not a gap.** A model routed to the wrong flow does
 /// not fail — it prints something wrong or jams, and the operator cannot tell
 /// which. "This model is not supported" is a sentence they can act on.
-pub fn select_task(model: &str, protocol_version: Option<u8>) -> Option<TaskKind> {
-    let model = model.trim().to_ascii_uppercase();
-
-    // Pairs first. D110_M on protocol 4 needs D110MV4, which is not ported, so
-    // it must NOT fall through to B1 — that is exactly the wrong-flow case.
+pub fn select_task(model_id: u16, protocol_version: Option<u8>) -> Option<TaskKind> {
+    // Pairs first. D110_M on protocol 4 needs the D110MV4 flow, which is not
+    // ported, so it must NOT fall through to the bare-model match below — that
+    // is exactly the wrong-flow case this function exists to prevent.
     if let Some(version) = protocol_version {
-        if let ("D110_M", 4) = (model.as_str(), version) {
+        if let (2320, 4) = (model_id, version) {
             return None;
         }
     }
 
-    match model.as_str() {
-        // The B1 flow covers this whole set upstream.
-        "B1" | "D110_M" | "B21_C2B" | "M2_H" | "N1" | "D101" => Some(TaskKind::B1),
+    // Every id the B1 flow covers upstream. Their geometry differs wildly —
+    // see `models::by_id`, which is where that lives.
+    match model_id {
+        4096 | 771 | 775 | 2560 | 2320 | 4608 | 3586 => Some(TaskKind::B1),
         _ => None,
     }
 }
@@ -426,32 +429,27 @@ mod tests {
 
     #[test]
     fn the_b1_flow_covers_more_than_the_b1() {
-        for model in ["B1", "D110_M", "B21_C2B", "M2_H", "N1", "D101"] {
-            assert_eq!(select_task(model, None), Some(TaskKind::B1), "{model}");
+        // B1, B21_C2B (two ids), D101, D110_M, M2_H, N1.
+        for id in [4096u16, 771, 775, 2560, 2320, 4608, 3586] {
+            assert_eq!(select_task(id, None), Some(TaskKind::B1), "id {id}");
         }
     }
 
     #[test]
     fn a_model_with_a_protocol_version_beats_the_bare_model() {
-        // D110_M on protocol 4 needs a flow that is not ported. Falling back to
-        // B1 here would be the exact wrong-flow failure select_task exists to
+        // D110_M (2320) on protocol 4 needs a flow that is not ported. Falling
+        // back to B1 here would be the wrong-flow failure select_task exists to
         // prevent.
-        assert_eq!(select_task("D110_M", Some(4)), None);
-        assert_eq!(select_task("D110_M", Some(3)), Some(TaskKind::B1));
-        assert_eq!(select_task("D110_M", None), Some(TaskKind::B1));
+        assert_eq!(select_task(2320, Some(4)), None);
+        assert_eq!(select_task(2320, Some(3)), Some(TaskKind::B1));
+        assert_eq!(select_task(2320, None), Some(TaskKind::B1));
     }
 
     #[test]
     fn an_unported_model_is_refused_rather_than_guessed_at() {
-        for model in [
-            "D11", "D11S", "B21", "B21_L2B", "B21S", "D110", "H1S", "B1_PRO",
-        ] {
-            assert_eq!(select_task(model, None), None, "{model}");
+        // D11, D11S, B21, B21_L2B, B21S, D110, H1S and anything unheard of.
+        for id in [512u16, 513, 514, 1792, 2304, 3584, 5120, 0, 65535] {
+            assert_eq!(select_task(id, None), None, "id {id}");
         }
-    }
-
-    #[test]
-    fn model_matching_ignores_case_and_surrounding_space() {
-        assert_eq!(select_task(" b1 ", None), Some(TaskKind::B1));
     }
 }

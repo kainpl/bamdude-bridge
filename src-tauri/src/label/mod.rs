@@ -17,6 +17,7 @@
 //! same source, and a port that hides its origin is one they cannot continue.
 
 pub mod encoder;
+pub mod models;
 pub mod packet;
 pub mod serial;
 pub mod task;
