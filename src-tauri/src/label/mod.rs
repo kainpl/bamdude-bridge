@@ -18,5 +18,6 @@
 
 pub mod encoder;
 pub mod packet;
+pub mod serial;
 pub mod task;
 pub mod transport;
