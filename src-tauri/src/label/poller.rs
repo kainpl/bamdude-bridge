@@ -407,13 +407,22 @@ pub async fn run(app: AppHandle, stop: Arc<AtomicBool>) {
             }
         };
 
+        // ⚠️ Published before anything else can go wrong. The id is what
+        // somebody needs in order to adopt this machine, and a bridge that
+        // cannot reach the server is exactly when they are looking for it.
+        set_status(|status| status.installation_id = settings.installation_id.clone());
+
         if !settings.label_enabled
             || settings.label_port.trim().is_empty()
             || !settings.is_complete()
         {
+            // Idle, not stopped. A loop alive and waiting for configuration
+            // must not read on screen as one that died.
+            set_status(|status| status.idle = true);
             tokio::time::sleep(FALLBACK_INTERVAL).await;
             continue;
         }
+        set_status(|status| status.idle = false);
 
         let Next::After(wait) = tick(&client, &settings).await;
         if wait.is_zero() {
@@ -499,6 +508,16 @@ mod tests {
         let json = serde_json::to_string(&build_report(&settings, true, None)).unwrap();
         assert!(!json.contains("enabled"), "{json}");
         assert!(!json.contains("\"name\""), "{json}");
+    }
+
+    #[test]
+    fn the_status_the_window_reads_is_the_one_the_loop_writes() {
+        // ⚠️ The loop published its outcome but not its id, and the window
+        // showed a live connection under the words "not generated yet". The
+        // patch that added the line silently did not apply — nothing asserted
+        // that the two halves of this module meet.
+        set_status(|status| status.installation_id = String::from("abc-123"));
+        assert_eq!(label_poller_status().installation_id, "abc-123");
     }
 
     #[test]
