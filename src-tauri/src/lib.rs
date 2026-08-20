@@ -29,8 +29,20 @@ pub mod registry;
 pub mod tray;
 pub mod upload;
 
-use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
+
+/// Lets the label poller be stopped.
+///
+/// ⚠️ A flag rather than aborting the task. Nothing sets it today — the loop
+/// lives as long as the app does — but killing the task mid-print would leave a
+/// job claimed on the server and a printer half-fed, so the way out has to be
+/// one the loop notices between passes.
+///
+/// Kept in Tauri's state rather than a `static`: a `LazyLock` would raise this
+/// crate's minimum Rust past the 1.77 it builds on today.
+pub struct LabelPollerStop(pub Arc<AtomicBool>);
 
 /// Event the frontend listens on to report the outcome of a handover.
 const EVENT_HANDOVER: &str = "handover";
@@ -122,6 +134,7 @@ pub fn run() {
                     label::commands::label_list_ports,
                     label::commands::label_read_status,
                     label::commands::label_test_print,
+                    label::poller::label_poller_status,
                     last_handover,
                     app_version,
                     registry::registration_status,
@@ -138,6 +151,7 @@ pub fn run() {
                     label::commands::label_list_ports,
                     label::commands::label_read_status,
                     label::commands::label_test_print,
+                    label::poller::label_poller_status,
                     last_handover,
                     app_version,
                 ]
@@ -169,6 +183,17 @@ pub fn run() {
                      start normally; registration elevates on its own when it needs to."
                 );
             }
+
+            // ⚠️ Started unconditionally, and it decides for itself each pass
+            // whether the label role is on. Gating it here would mean somebody
+            // who switches the role on has to restart the app before anything
+            // happens — and this loop is the only thing that would need it.
+            let stop = Arc::new(AtomicBool::new(false));
+            app.manage(LabelPollerStop(stop.clone()));
+            let poller_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                label::poller::run(poller_handle, stop).await;
+            });
 
             // The first launch does not go through the single-instance hook,
             // so the cold-start path needs the same dispatch.

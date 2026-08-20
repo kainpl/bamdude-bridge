@@ -20,6 +20,7 @@ pub mod commands;
 pub mod encoder;
 pub mod models;
 pub mod packet;
+pub mod poller;
 pub mod serial;
 pub mod status;
 pub mod task;

@@ -16,6 +16,14 @@ interface PortInfo {
   usb: boolean;
 }
 
+/** Mirrors `label::poller::PollerStatus`. */
+interface PollerStatus {
+  installation_id: string;
+  last_contact: string | null;
+  last_outcome: string | null;
+  idle: boolean;
+}
+
 /** Mirrors `label::commands::PortsResult`. */
 interface PortsResult {
   ports: PortInfo[];
@@ -497,9 +505,69 @@ function LabelPrinterSection({
           </div>
 
           {snapshot && <PrinterFacts snapshot={snapshot} />}
+
+          <PollerFacts />
         </>
       )}
     </section>
+  );
+}
+
+/**
+ * Whether BamDude is actually being asked for work, and under what name.
+ *
+ * ⚠️ The installation id is the point of this block. A device shows up in
+ * BamDude's list unadopted, identified only by this string — without it on
+ * screen somebody is matching a UUID against a list of UUIDs by eye.
+ */
+function PollerFacts() {
+  const [status, setStatus] = useState<PollerStatus | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    const read = () => {
+      invoke<PollerStatus>("label_poller_status").then(setStatus).catch(() => setStatus(null));
+    };
+    read();
+    // The loop's own cadence is the server's; this is just the window keeping
+    // up with it, and a second is fast enough to feel live without being work.
+    const timer = window.setInterval(read, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  if (!status) return null;
+
+  const copy = () => {
+    void navigator.clipboard.writeText(status.installation_id);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  };
+
+  return (
+    <div className="poller">
+      <h3>This machine, to the server</h3>
+      <ul className="state">
+        <li>
+          <code>{status.installation_id || "not generated yet"}</code>
+          {status.installation_id && (
+            <button type="button" className="link" onClick={copy}>
+              {copied ? "Copied" : "Copy"}
+            </button>
+          )}
+        </li>
+        <li className={status.last_contact ? "ok" : undefined}>
+          {status.last_outcome ??
+            (status.idle
+              ? "Waiting — fill in the server and key on the Files tab, and pick a port above."
+              : "Starting up…")}
+        </li>
+      </ul>
+      <small>
+        Find this id under Settings → Label printers in BamDude and switch it on. Until somebody
+        does, this machine is listed but gets no work — which is deliberate: signing in proves the
+        app is ours, not that this printer should be given your labels.
+      </small>
+    </div>
   );
 }
 

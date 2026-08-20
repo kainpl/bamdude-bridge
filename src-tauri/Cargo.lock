@@ -235,6 +235,7 @@ name = "bamdude-bridge"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "image",
  "log",
  "percent-encoding",
@@ -249,6 +250,7 @@ dependencies = [
  "tauri-winrt-notification",
  "thiserror 2.0.20",
  "tokio",
+ "uuid",
  "winreg 0.52.0",
 ]
 

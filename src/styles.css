@@ -233,3 +233,37 @@ code {
   border-radius: 50%;
   background: var(--accent);
 }
+
+/* What this machine is called on the server, and whether it is being asked for
+   work. Set apart from the printer facts above it because it answers a
+   different question: those are about the hardware, this is about the pairing. */
+.poller {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.poller h3 {
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.poller code {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 0.82rem;
+  /* The id is a UUID and the window is narrow; wrapping beats a scrollbar. */
+  overflow-wrap: anywhere;
+}
+
+/* A button that reads as an action rather than a control — it sits inline in a
+   sentence, and a full button there would dominate the line it belongs to. */
+button.link {
+  background: none;
+  border: none;
+  padding: 0 0 0 8px;
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}

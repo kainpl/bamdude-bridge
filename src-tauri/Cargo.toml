@@ -50,6 +50,16 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 
+# The queued raster travels as base64 inside the poll's JSON answer. A second
+# request for the bytes would double the round trips on the one path that runs
+# every few seconds all day.
+base64 = "0.22"
+
+# The installation id, generated once and then never again. ⚠️ Regenerating it
+# orphans the paired device row on the server and the printer silently stops
+# getting work — see config::installation_id.
+uuid = { version = "1", features = ["v4"] }
+
 # The whole reason parsing is delicate — see farm_client_url.rs.
 percent-encoding = "2"
 
