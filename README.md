@@ -52,7 +52,7 @@ Early. Working end to end on Windows, not yet released, not signed.
 ## Requirements
 
 - Windows 10/11 (the BambuStudio integration is Windows-only — Bambu never implemented it for macOS)
-- A reachable BamDude server and an API key with library-upload scope
+- A reachable BamDude server and an API key with the **Manage Library** and **Print labels on a desk printer** permissions
 
 ## Building
 

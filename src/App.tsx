@@ -237,8 +237,9 @@ export function App() {
             onChange={(event) => setSettings({ ...settings, api_key: event.target.value })}
           />
           <small>
-            Needs the <strong>library-manage</strong> scope, and nothing else. Create one in BamDude
-            under Settings → API keys.
+            Needs two permissions and nothing else: <strong>Manage Library</strong> and{' '}
+            <strong>Print labels on a desk printer</strong>. Create the key in BamDude under
+            Settings → API keys.
           </small>
         </label>
 

@@ -25,7 +25,9 @@ pub struct Settings {
     /// nothing without the description beside it.
     pub label_port: String,
 
-    /// API key (`bb_…`) with the library-upload scope.
+    /// API key (`bb_…`) carrying the two permissions the bridge uses: "Manage
+    /// Library" for the plates it receives, and "Print labels on a desk
+    /// printer" for the label queue it polls.
     ///
     /// ⚠️ **Stored in plaintext in the config file today.** The right home on
     /// Windows is the Credential Manager, and moving it there is a change of

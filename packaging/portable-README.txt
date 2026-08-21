@@ -7,7 +7,8 @@ nothing is registered until you ask for it.
 FIRST RUN
 ---------
 1. Enter your BamDude server address and an API key.
-   The key needs the library-manage scope, and nothing else.
+   The key needs two permissions and nothing else: "Manage Library"
+   and "Print labels on a desk printer".
 2. Press "Test connection". It checks the address, the key, AND that the
    key is actually allowed to add files to your library — so a green
    answer here means the first plate will land.
