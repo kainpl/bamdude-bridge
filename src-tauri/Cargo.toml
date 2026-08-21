@@ -85,6 +85,12 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "time"] 
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 
+# Remembers how big the window was left. ⚠️ Chosen over doing it by hand for
+# one reason worth writing down: it checks a restored position against the
+# monitors that are actually connected, so an undocked laptop does not get its
+# window placed off-screen where it cannot be reached.
+tauri-plugin-window-state = "2"
+
 # ⚠️ Portable updates verify with the SAME key the plugin uses, read out of the
 # embedded tauri.conf.json — one trust root, not two.
 minisign-verify = "0.2"

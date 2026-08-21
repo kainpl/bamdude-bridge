@@ -118,6 +118,19 @@ pub fn run() {
         // plate sent from the slicer would open another copy of the app; with
         // it, the already-running instance gets the argv and the second
         // process exits.
+        // ⚠️ SIZE and POSITION only. Deliberately NOT `VISIBLE`: the plugin
+        // shows a window when it restores that flag, and this one is created
+        // hidden on purpose — it lives in the tray, and at sign-in it must
+        // come up invisible. Nor `MAXIMIZED`, which the window no longer
+        // offers and which would fight the config if an old state carried it.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::SIZE
+                        | tauri_plugin_window_state::StateFlags::POSITION,
+                )
+                .build(),
+        )
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
