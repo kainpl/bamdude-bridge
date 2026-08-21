@@ -24,7 +24,10 @@ crate-type = ["lib", "cdylib", "staticlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+# ⚠️ `image-png` is what lets the tray decode its own icon at runtime. Without
+# it `Image::from_bytes` does not exist and the tray silently falls back to
+# the window icon — which is the plate this change exists to stop showing.
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
 
 # A protocol launch starts a NEW process with the URL in argv. Without this,
 # every file sent from the slicer would open a second copy of the app.
