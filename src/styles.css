@@ -72,7 +72,8 @@ label {
   font-weight: 500;
 }
 
-input {
+input,
+select {
   padding: 9px 11px;
   border: 1px solid var(--line);
   border-radius: 7px;
@@ -81,7 +82,15 @@ input {
   font: inherit;
 }
 
-input:focus-visible {
+/* The popup list is drawn by the OS, which does not inherit the page's colours
+   — without this the options are black-on-black under a dark theme. */
+select option {
+  background: var(--bg);
+  color: inherit;
+}
+
+input:focus-visible,
+select:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
@@ -181,4 +190,115 @@ code {
 .bad {
   color: var(--bad);
   border-color: color-mix(in srgb, var(--bad) 40%, transparent);
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--line);
+  margin-top: 4px;
+}
+
+.tabs button {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 9px 12px;
+  color: var(--muted);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  /* Reserve the selected weight so the row does not shift as tabs change. */
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tabs button[aria-selected="true"] {
+  color: inherit;
+  border-bottom-color: var(--accent);
+}
+
+.tabs button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* Says the label role is switched on without opening its tab — otherwise the
+   only way to know is to go and look. */
+.tabs .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* What this machine is called on the server, and whether it is being asked for
+   work. Set apart from the printer facts above it because it answers a
+   different question: those are about the hardware, this is about the pairing. */
+.poller {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.poller h3 {
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.poller code {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 0.82rem;
+  /* The id is a UUID and the window is narrow; wrapping beats a scrollbar. */
+  overflow-wrap: anywhere;
+}
+
+/* A button that reads as an action rather than a control — it sits inline in a
+   sentence, and a full button there would dominate the line it belongs to. */
+button.link {
+  background: none;
+  border: none;
+  padding: 0 0 0 8px;
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+/* Whether there is a newer version. Sits below the tabs because it is about
+   the app itself, not about either role it plays. */
+.update {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+/* Release notes come from GitHub as markdown. Rendering them properly would
+   mean a markdown dependency in a window that has none; monospace and honest
+   wrapping reads fine for a changelog and costs nothing. */
+.notes {
+  margin: 8px 0;
+  padding: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--sunken, rgba(0, 0, 0, 0.15));
+  border-radius: 6px;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.error {
+  color: #f87171;
+  font-size: 0.85rem;
 }

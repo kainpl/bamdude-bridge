@@ -17,10 +17,17 @@ pub fn build(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let quit = MenuItem::with_id(app, MENU_QUIT, "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&open, &quit])?;
 
-    let icon = app
-        .default_window_icon()
-        .cloned()
-        .ok_or("the bundle carries no window icon to reuse for the tray")?;
+    // ⚠️ Its OWN icon, not the window's. The app icon is a dark rounded plate
+    // with the mark taking 41% of its width — correct on a Start menu tile,
+    // and beside the glyphs every other tray icon is, it reads as a small
+    // badge rather than a peer. This one is the mark alone, filling the
+    // canvas, on transparency.
+    //
+    // Still 32x32, exactly as `default_window_icon` was, so the only thing
+    // that changed here is the artwork. If it still looks wrong, the scaling
+    // path is not the reason.
+    let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray-32.png"))
+        .map_err(|error| format!("the tray icon could not be decoded: {error}"))?;
 
     TrayIconBuilder::with_id("main")
         .icon(icon)

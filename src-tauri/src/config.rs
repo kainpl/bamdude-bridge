@@ -13,6 +13,18 @@ pub struct Settings {
     /// Stored without a trailing slash; [`Settings::endpoint`] adds the path.
     pub server_url: String,
 
+    /// Whether this machine does label printing at all.
+    ///
+    /// ⚠️ Off by default and separate from everything else. A bridge installed
+    /// only to catch plates from the slicer should not open serial ports, and
+    /// somebody with no label printer should not be asked about one.
+    pub label_enabled: bool,
+
+    /// Serial port the label printer is on, e.g. `COM6`. Chosen from an
+    /// enumeration in the window rather than typed, because the name means
+    /// nothing without the description beside it.
+    pub label_port: String,
+
     /// API key (`bb_…`) with the library-upload scope.
     ///
     /// ⚠️ **Stored in plaintext in the config file today.** The right home on
@@ -20,6 +32,15 @@ pub struct Settings {
     /// storage only — the field stays. Recorded here rather than in a tracker
     /// because whoever reads this struct is exactly who needs to know.
     pub api_key: String,
+
+    /// This installation's name to the server, generated once on first use.
+    ///
+    /// ⚠️ **Never regenerate it.** The server pairs a device row to this string,
+    /// and a person adopts that row by hand. A new id arrives as a brand-new,
+    /// unadopted device — the printer simply stops getting work, with nothing
+    /// anywhere saying why. Empty here means "not generated yet", which
+    /// [`ensure_installation_id`] fixes exactly once.
+    pub installation_id: String,
 }
 
 impl Settings {
@@ -74,6 +95,21 @@ pub fn load(app: &AppHandle) -> Result<Settings, ConfigError> {
     serde_json::from_str(&raw).map_err(|error| ConfigError::Malformed(error.to_string()))
 }
 
+/// Read the settings, minting an installation id if there is not one yet.
+///
+/// ⚠️ Writes back when it mints one, so the id survives the next start. A
+/// caller that only read would hand the server a different name every poll and
+/// fill the device list with one row per minute.
+pub fn load_with_identity(app: &AppHandle) -> Result<Settings, ConfigError> {
+    let mut settings = load(app)?;
+    if settings.installation_id.trim().is_empty() {
+        settings.installation_id = uuid::Uuid::new_v4().to_string();
+        save(app, &settings)?;
+        log::info!("minted installation id {}", settings.installation_id);
+    }
+    Ok(settings)
+}
+
 pub fn save(app: &AppHandle, settings: &Settings) -> Result<(), ConfigError> {
     let path = settings_path(app)?;
     if let Some(parent) = path.parent() {
@@ -94,7 +130,16 @@ pub fn load_settings(app: AppHandle) -> Result<Settings, String> {
 
 #[tauri::command]
 pub fn save_settings(app: AppHandle, settings: Settings) -> Result<(), String> {
-    save(&app, &settings).map_err(|error| error.to_string())
+    // ⚠️ The window never sends an installation id, so a naive save would blank
+    // one that already exists and orphan the paired device. Carry it across
+    // from what is on disk instead of trusting the form to round-trip it.
+    let mut incoming = settings;
+    if incoming.installation_id.trim().is_empty() {
+        if let Ok(existing) = load(&app) {
+            incoming.installation_id = existing.installation_id;
+        }
+    }
+    save(&app, &incoming).map_err(|error| error.to_string())
 }
 
 /// Liveness probe. Unauthenticated, and at the ROOT — not under `/api/v1`.
@@ -207,9 +252,13 @@ mod tests {
 
     #[test]
     fn endpoint_joins_without_doubling_the_slash() {
+        // `..Default::default()` rather than every field: this test is about
+        // joining a URL, and it should not need editing every time the struct
+        // grows a field that has nothing to do with that.
         let settings = Settings {
             server_url: String::from("http://host:8000/"),
             api_key: String::from("bb_x"),
+            ..Default::default()
         };
         assert_eq!(
             settings.endpoint("/api/v1/library/files"),
@@ -222,7 +271,36 @@ mod tests {
         let settings = Settings {
             server_url: String::from("http://host:8000"),
             api_key: String::from("   "),
+            ..Default::default()
         };
         assert!(!settings.is_complete());
+    }
+
+    #[test]
+    fn label_printing_is_off_until_somebody_switches_it_on() {
+        // A bridge installed only to catch plates from the slicer must not open
+        // serial ports, and somebody with no label printer must not be asked
+        // about one.
+        let fresh = Settings::default();
+        assert!(!fresh.label_enabled);
+        assert!(fresh.label_port.is_empty());
+    }
+
+    #[test]
+    fn an_installation_id_is_absent_until_something_mints_one() {
+        assert!(Settings::default().installation_id.is_empty());
+    }
+
+    #[test]
+    fn the_two_roles_are_independent_of_each_other() {
+        // Label printing configured, server not: still a valid state, because
+        // the printer is reachable and testable without one.
+        let labels_only = Settings {
+            label_enabled: true,
+            label_port: String::from("COM6"),
+            ..Default::default()
+        };
+        assert!(!labels_only.is_complete(), "no server is still no server");
+        assert!(labels_only.label_enabled);
     }
 }

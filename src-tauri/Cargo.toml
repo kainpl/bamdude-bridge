@@ -1,6 +1,6 @@
 [package]
 name = "bamdude-bridge"
-version = "0.1.0"
+version = "0.2.0"
 description = "Desktop bridge between a Windows workstation and a BamDude server"
 authors = ["BamDude contributors"]
 license = "AGPL-3.0-or-later"
@@ -24,7 +24,10 @@ crate-type = ["lib", "cdylib", "staticlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+# ⚠️ `image-png` is what lets the tray decode its own icon at runtime. Without
+# it `Image::from_bytes` does not exist and the tray silently falls back to
+# the window icon — which is the plate this change exists to stop showing.
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
 
 # A protocol launch starts a NEW process with the URL in argv. Without this,
 # every file sent from the slicer would open a second copy of the app.
@@ -42,9 +45,23 @@ tauri-plugin-log = "2"
 # direct costs nothing — it was already in the tree as the plugin's own
 # dependency — and buys the two lengths Windows actually offers.
 
+# Decoding the PNG the server renders. No default features: we need PNG in and
+# nothing else, and every extra format is bytes in a binary people download.
+image = { version = "0.25", default-features = false, features = ["png"] }
+
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+
+# The queued raster travels as base64 inside the poll's JSON answer. A second
+# request for the bytes would double the round trips on the one path that runs
+# every few seconds all day.
+base64 = "0.22"
+
+# The installation id, generated once and then never again. ⚠️ Regenerating it
+# orphans the paired device row on the server and the printer silently stops
+# getting work — see config::installation_id.
+uuid = { version = "1", features = ["v4"] }
 
 # The whole reason parsing is delicate — see farm_client_url.rs.
 percent-encoding = "2"
@@ -56,7 +73,30 @@ reqwest = { version = "0.12", default-features = false, features = [
     "json",
     "rustls-tls",
 ] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs"] }
+async-trait = "0.1"
+# USB serial to the label printer. Blocking by design; the transport hands
+# the port to a blocking thread per operation rather than running one of its
+# own for the life of the app.
+serialport = "4"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "time"] }
+
+# Self-update. The installer path is the official plugin; the portable path is
+# ours (see src/update/portable.rs) and needs the verification primitives.
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+
+# Remembers how big the window was left. ⚠️ Chosen over doing it by hand for
+# one reason worth writing down: it checks a restored position against the
+# monitors that are actually connected, so an undocked laptop does not get its
+# window placed off-screen where it cannot be reached.
+tauri-plugin-window-state = "2"
+
+# ⚠️ Portable updates verify with the SAME key the plugin uses, read out of the
+# embedded tauri.conf.json — one trust root, not two.
+minisign-verify = "0.2"
+semver = "1"
+sha2 = "0.10"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(windows)'.dependencies]
 # Registry access for the two keys that make BambuStudio offer the button and

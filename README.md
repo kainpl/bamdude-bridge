@@ -16,7 +16,15 @@ BambuStudio can hand a sliced plate to a farm-management app. On Windows it deci
 
 ### Reaches hardware the server cannot
 
-Planned: Niimbot label printers over USB/Bluetooth. The server renders labels today and sends them to a system print driver through your browser; a directly-attached printer is a different path that needs a process on the machine the printer is plugged into.
+Niimbot label printers over USB. Switch the role on in the settings window, pick the port, and Bridge will read the printer and print a test label. It is **off unless you turn it on** — a Bridge installed only to catch plates from the slicer never opens a serial port, and someone without a label printer is never asked about one.
+
+What it shows you: which model it is and whether that model is supported, firmware and serial, whether paper is loaded, and what the cassette tag says — barcode, consumable type, how much is used.
+
+⚠️ **The NIIMBOT desktop app holds the port exclusively.** While it is running nothing else can open the printer, and the error is a bare "Access is denied". Close it first.
+
+⚠️ **The cassette does not report its size in millimetres.** No Niimbot tag does. Bridge shows you the barcode; turning that into a size is BamDude's job, and it asks you once for a cassette it has not seen. There is deliberately no size field here — a size that can be set in two places becomes two sizes.
+
+Taking jobs from BamDude's queue automatically is not wired up yet; today the role gives you the device, its state and a test print.
 
 ## How it behaves
 
