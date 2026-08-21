@@ -16,6 +16,20 @@ interface PortInfo {
   usb: boolean;
 }
 
+/** Mirrors `update::UpdateCheck`. */
+interface UpdateCheck {
+  available: boolean;
+  current_version: string;
+  version: string | null;
+  /** The GitHub release body. ⚠️ Shown verbatim — it is the real notes, not a
+   *  second changelog somebody has to remember to keep. */
+  notes: string | null;
+  date: string | null;
+  /** True when this copy replaces its own executable instead of running an
+   *  installer. The two feel different enough to say so. */
+  portable: boolean;
+}
+
 /** Mirrors `label::poller::PollerStatus`. */
 interface PollerStatus {
   installation_id: string;
@@ -297,6 +311,10 @@ export function App() {
         />
       )}
 
+      {/* Under both tabs, because updating is about the app rather than about
+          either of its two roles. */}
+      <UpdateSection />
+
       {message && <p className={message.tone === "ok" ? "ok" : "bad"}>{message.text}</p>}
     </main>
   );
@@ -568,6 +586,81 @@ function PollerFacts() {
         app is ours, not that this printer should be given your labels.
       </small>
     </div>
+  );
+}
+
+/**
+ * Whether there is a newer version, and the button that takes it.
+ *
+ * ⚠️ Never checks by itself on startup. This app is started by the slicer
+ * handing it a file; a version check racing that would delay the one thing the
+ * launch was for. The person asks.
+ */
+function UpdateSection() {
+  const [state, setState] = useState<UpdateCheck | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const check = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      setState(await invoke<UpdateCheck>("check_for_update"));
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const install = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      // Either path ends with this process gone — the installed one is exited
+      // by the installer, the portable one by us so the helper can take our
+      // place. A success message here would be shown to nobody.
+      await invoke("install_update");
+    } catch (e) {
+      setError(String(e));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="panel">
+      <h2>Updates</h2>
+
+      <div className="row">
+        <button type="button" onClick={() => void check()} disabled={busy}>
+          Check for updates
+        </button>
+        {state && !state.available && !busy && (
+          <span className="muted">Up to date ({state.current_version}).</span>
+        )}
+      </div>
+
+      {error && <p className="error">{error}</p>}
+
+      {state?.available && (
+        <div className="update">
+          <p>
+            <strong>{state.version}</strong> is available — you have {state.current_version}.
+          </p>
+          {state.notes && <pre className="notes">{state.notes}</pre>}
+          <div className="row">
+            <button type="button" onClick={() => void install()} disabled={busy}>
+              {busy ? "Installing…" : "Download and install"}
+            </button>
+          </div>
+          <small>
+            {state.portable
+              ? "This is a portable copy: the new version replaces this file and starts itself. The folder has to be writable — a copy inside Program Files will refuse rather than half-apply."
+              : "The installer runs with a progress bar and asks nothing. BamDude Bridge closes and comes back on the new version."}
+          </small>
+        </div>
+      )}
+    </section>
   );
 }
 

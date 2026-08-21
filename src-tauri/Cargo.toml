@@ -77,6 +77,18 @@ async-trait = "0.1"
 serialport = "4"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "time"] }
 
+# Self-update. The installer path is the official plugin; the portable path is
+# ours (see src/update/portable.rs) and needs the verification primitives.
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+
+# ⚠️ Portable updates verify with the SAME key the plugin uses, read out of the
+# embedded tauri.conf.json — one trust root, not two.
+minisign-verify = "0.2"
+semver = "1"
+sha2 = "0.10"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
 [target.'cfg(windows)'.dependencies]
 # Registry access for the two keys that make BambuStudio offer the button and
 # make Windows route the URL back to us.

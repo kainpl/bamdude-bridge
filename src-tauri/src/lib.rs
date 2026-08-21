@@ -27,6 +27,7 @@ pub mod label;
 #[cfg(windows)]
 pub mod registry;
 pub mod tray;
+pub mod update;
 pub mod upload;
 
 use std::sync::atomic::AtomicBool;
@@ -117,6 +118,8 @@ pub fn run() {
         // plate sent from the slicer would open another copy of the app; with
         // it, the already-running instance gets the argv and the second
         // process exits.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             log::info!("second instance forwarded {} argument(s)", argv.len());
             dispatch_argv(app, &argv);
@@ -135,6 +138,8 @@ pub fn run() {
                     label::commands::label_read_status,
                     label::commands::label_test_print,
                     label::poller::label_poller_status,
+                    update::check_for_update,
+                    update::install_update,
                     last_handover,
                     app_version,
                     registry::registration_status,
@@ -152,6 +157,8 @@ pub fn run() {
                     label::commands::label_read_status,
                     label::commands::label_test_print,
                     label::poller::label_poller_status,
+                    update::check_for_update,
+                    update::install_update,
                     last_handover,
                     app_version,
                 ]

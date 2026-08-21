@@ -267,3 +267,38 @@ button.link {
   font-size: 0.82rem;
   cursor: pointer;
 }
+
+/* Whether there is a newer version. Sits below the tabs because it is about
+   the app itself, not about either role it plays. */
+.update {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+/* Release notes come from GitHub as markdown. Rendering them properly would
+   mean a markdown dependency in a window that has none; monospace and honest
+   wrapping reads fine for a changelog and costs nothing. */
+.notes {
+  margin: 8px 0;
+  padding: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--sunken, rgba(0, 0, 0, 0.15));
+  border-radius: 6px;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.error {
+  color: #f87171;
+  font-size: 0.85rem;
+}

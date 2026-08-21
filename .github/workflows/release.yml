@@ -122,7 +122,14 @@ jobs:
         shell: bash
         run: echo "version=$(node -p "require('./src-tauri/tauri.conf.json').version")" >> "$GITHUB_ENV"
 
+      # ⚠️ The signing key is what every installed copy checks against. Without
+      # it in the environment, `createUpdaterArtifacts` produces artifacts the
+      # updater will refuse — and the failure appears on the USER's machine, one
+      # release later, not here.
       - name: Build installer
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
         run: npm run tauri build
 
       # Tauri names the installer after the product, which is fine on a
@@ -130,6 +137,8 @@ jobs:
       # installer is published, so both read the same way.
       - name: Stage artifacts
         shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
           New-Item -ItemType Directory -Force dist-release | Out-Null
 
@@ -149,8 +158,43 @@ jobs:
           Copy-Item "target/release/bamdude-bridge.exe" portable-staging/
           Copy-Item "packaging/portable-README.txt" portable-staging/README.txt
           Copy-Item "LICENSE" portable-staging/
+
+          # ⚠️ The marker is what tells a running copy it is portable. The
+          # executable is byte-identical to the installed one, so without this
+          # file beside it the app would take the installer path and try to
+          # overwrite something in Program Files.
+          # ⚠️ Not a here-string: PowerShell wants its closing '@ in column 0,
+          # which cannot exist inside a YAML block scalar. An array of lines
+          # says the same thing and survives the indentation.
+          Set-Content -Path "portable-staging/portable.bamdude" -Value @(
+            'This file marks a portable BamDude Bridge. Keep it beside the executable:',
+            'without it the app cannot tell it is portable, and self-updating will refuse.'
+          )
+
+          # ⚠️ A second manifest INSIDE the archive. The signature says "we
+          # built this zip"; it does not say what is in it. This binds the
+          # version, the architecture and the exact executable, so a stale but
+          # correctly signed archive cannot be served for a version it is not.
+          $exeHash = (Get-FileHash "portable-staging/bamdude-bridge.exe" -Algorithm SHA256).Hash.ToLower()
+          $manifest = [ordered]@{
+            schema_version    = 1
+            version           = $env:version
+            arch              = 'x64'
+            executable        = 'bamdude-bridge.exe'
+            executable_sha256 = $exeHash
+          }
+          $manifest | ConvertTo-Json | Set-Content -Path "portable-staging/portable-update.json" -Encoding utf8
+
           Compress-Archive -Path portable-staging/* `
             -DestinationPath "dist-release/bamdude-bridge-$env:version-windows-x64-portable.zip" -Force
+
+          # Signed with the same key the plugin's own artifacts carry — one
+          # trust root. The app reads the public half out of its embedded
+          # config, so a `.sig` from anywhere else fails verification.
+          npx --yes @tauri-apps/cli signer sign `
+            --private-key $env:TAURI_SIGNING_PRIVATE_KEY `
+            --password '' `
+            "dist-release/bamdude-bridge-$env:version-windows-x64-portable.zip"
 
           # Unversioned aliases so a website or wiki can link one URL that
           # survives version bumps, the same way the BamDude installer does.
@@ -158,6 +202,31 @@ jobs:
             "dist-release/bamdude-bridge-windows-x64-setup.exe"
           Copy-Item "dist-release/bamdude-bridge-$env:version-windows-x64-portable.zip" `
             "dist-release/bamdude-bridge-windows-x64-portable.zip"
+
+          # ⚠️ `latest.json` is the whole update mechanism: every installed copy
+          # polls THIS file at the fixed `releases/latest/download/` URL. The
+          # installer's own signature is produced by the build beside the
+          # setup.exe as a `.sig`; it goes in here, not into the release.
+          #
+          # The notes are the release body, filled in by the publish step
+          # below — written once, on the release, rather than kept as a second
+          # changelog that drifts.
+          $setupSig = Get-ChildItem "target/release/bundle/nsis/*_${env:version}_x64-setup.exe.sig" |
+            Select-Object -First 1
+          if (-not $setupSig) { throw "the installer was not signed — is TAURI_SIGNING_PRIVATE_KEY set?" }
+
+          $latest = [ordered]@{
+            version   = "$env:version"
+            notes     = ''
+            pub_date  = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+            platforms = [ordered]@{
+              'windows-x86_64' = [ordered]@{
+                signature = (Get-Content $setupSig.FullName -Raw).Trim()
+                url       = "https://github.com/${{ github.repository }}/releases/download/v$env:version/bamdude-bridge-$env:version-windows-x64-setup.exe"
+              }
+            }
+          }
+          $latest | ConvertTo-Json -Depth 5 | Set-Content -Path "dist-release/latest.json" -Encoding utf8
 
           Get-ChildItem dist-release | Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB,2)}}
 
@@ -189,3 +258,18 @@ jobs:
           files: dist-release/*
           fail_on_unmatched_files: true
           prerelease: ${{ steps.tagkind.outputs.prerelease }}
+
+      # ⚠️ After the release exists, because the notes ARE its body — which
+      # the step above may have just generated. Writing them into the manifest
+      # earlier would publish an empty `notes` and leave every user looking at
+      # "a new version is available" with nothing saying what changed.
+      - name: Put the release notes into latest.json
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          body=$(gh release view "$GITHUB_REF_NAME" --json body --jq .body)
+          jq --arg notes "$body" '.notes = $notes' dist-release/latest.json > latest.tmp
+          mv latest.tmp dist-release/latest.json
+          gh release upload "$GITHUB_REF_NAME" dist-release/latest.json --clobber
