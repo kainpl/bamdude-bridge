@@ -140,6 +140,7 @@ pub fn run() {
                     label::poller::label_poller_status,
                     update::check_for_update,
                     update::install_update,
+                    update::last_update_check,
                     last_handover,
                     app_version,
                     registry::registration_status,
@@ -159,6 +160,7 @@ pub fn run() {
                     label::poller::label_poller_status,
                     update::check_for_update,
                     update::install_update,
+                    update::last_update_check,
                     last_handover,
                     app_version,
                 ]
@@ -201,6 +203,8 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 label::poller::run(poller_handle, stop).await;
             });
+
+            update::start_periodic_checks(app.handle().clone());
 
             // The first launch does not go through the single-instance hook,
             // so the cold-start path needs the same dispatch.

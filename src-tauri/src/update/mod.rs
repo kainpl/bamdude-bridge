@@ -15,9 +15,32 @@
 
 pub mod portable;
 
+use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
+
 use serde::Serialize;
 use tauri::AppHandle;
 use tauri_plugin_updater::UpdaterExt;
+
+/// How long after launch the first check waits.
+///
+/// ⚠️ Not zero, and this corrects an earlier decision here. The app is
+/// usually started by the slicer handing it a file, and that handover is the
+/// only thing the launch was for — so the check stands aside until it is done
+/// rather than competing with it for the first seconds.
+const FIRST_CHECK_DELAY: Duration = Duration::from_secs(45);
+
+/// And how often after that. A tray resident that outlives a working week
+/// should notice a release without being asked; six hours notices within a
+/// day without being a heartbeat to somebody's firewall.
+const CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
+
+/// The last answer, so opening the tab shows something immediately instead of
+/// a spinner over a network round trip.
+fn cache() -> &'static Mutex<Option<UpdateCheck>> {
+    static CELL: OnceLock<Mutex<Option<UpdateCheck>>> = OnceLock::new();
+    CELL.get_or_init(|| Mutex::new(None))
+}
 
 /// Where the portable archive and its signature live for a given version.
 ///
@@ -31,7 +54,7 @@ fn portable_urls(version: &str) -> Result<(String, String), String> {
 }
 
 /// What the window shows when it asks whether there is anything new.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct UpdateCheck {
     pub available: bool,
     pub current_version: String,
@@ -46,6 +69,46 @@ pub struct UpdateCheck {
     pub portable: bool,
 }
 
+/// The last check's result, or `None` if none has finished yet.
+///
+/// Separate from [`check_for_update`] on purpose: this never touches the
+/// network, so the window can render the moment it opens.
+#[tauri::command]
+pub fn last_update_check() -> Option<UpdateCheck> {
+    cache().lock().ok().and_then(|held| held.clone())
+}
+
+fn remember(result: &UpdateCheck) {
+    if let Ok(mut held) = cache().lock() {
+        *held = Some(result.clone());
+    }
+}
+
+/// Ask now, from the background, and remember the answer.
+///
+/// ⚠️ A failure is logged and dropped rather than surfaced. This runs
+/// unattended; a laptop that was asleep, or behind a captive portal, must not
+/// end up with an error banner it never asked for. The manual button still
+/// reports failures, because somebody is watching that one.
+pub fn start_periodic_checks(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(FIRST_CHECK_DELAY).await;
+        loop {
+            match check_for_update(app.clone()).await {
+                Ok(result) if result.available => {
+                    log::info!(
+                        "update available: {}",
+                        result.version.as_deref().unwrap_or("?")
+                    );
+                }
+                Ok(_) => log::debug!("no update available"),
+                Err(error) => log::debug!("scheduled update check failed: {error}"),
+            }
+            tokio::time::sleep(CHECK_INTERVAL).await;
+        }
+    });
+}
+
 #[tauri::command]
 pub async fn check_for_update(app: AppHandle) -> Result<UpdateCheck, String> {
     let current = app.package_info().version.to_string();
@@ -54,22 +117,30 @@ pub async fn check_for_update(app: AppHandle) -> Result<UpdateCheck, String> {
         .map_err(|error| format!("cannot reach the update service: {error}"))?;
 
     match updater.check().await {
-        Ok(Some(update)) => Ok(UpdateCheck {
-            available: true,
-            current_version: current,
-            version: Some(update.version.clone()),
-            notes: update.body.clone(),
-            date: update.date.map(|date| date.to_string()),
-            portable: portable::is_portable(),
-        }),
-        Ok(None) => Ok(UpdateCheck {
-            available: false,
-            current_version: current,
-            version: None,
-            notes: None,
-            date: None,
-            portable: portable::is_portable(),
-        }),
+        Ok(Some(update)) => {
+            let result = UpdateCheck {
+                available: true,
+                current_version: current,
+                version: Some(update.version.clone()),
+                notes: update.body.clone(),
+                date: update.date.map(|date| date.to_string()),
+                portable: portable::is_portable(),
+            };
+            remember(&result);
+            Ok(result)
+        }
+        Ok(None) => {
+            let result = UpdateCheck {
+                available: false,
+                current_version: current,
+                version: None,
+                notes: None,
+                date: None,
+                portable: portable::is_portable(),
+            };
+            remember(&result);
+            Ok(result)
+        }
         // ⚠️ Said plainly rather than swallowed. "No update" and "could not ask"
         // look identical on screen otherwise, and the second one is the state
         // somebody needs to know about — it is usually a proxy or no network.

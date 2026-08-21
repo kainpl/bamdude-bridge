@@ -104,7 +104,7 @@ interface Registration {
 }
 
 /** The two roles, which share only a server address and a window. */
-type Tab = "files" | "labels";
+type Tab = "files" | "labels" | "updates";
 
 const EMPTY: Settings = {
   server_url: "",
@@ -121,6 +121,19 @@ export function App() {
   const [handover, setHandover] = useState<Handover | null>(null);
   const [version, setVersion] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("files");
+  // Read from the cache the background checker fills, so the dot appears on
+  // its own — the whole point of checking on a schedule is not having to ask.
+  const [updateReady, setUpdateReady] = useState(false);
+  useEffect(() => {
+    const read = () => {
+      invoke<UpdateCheck | null>("last_update_check")
+        .then((last) => setUpdateReady(Boolean(last?.available)))
+        .catch(() => setUpdateReady(false));
+    };
+    read();
+    const timer = window.setInterval(read, 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const refreshRegistration = useCallback(() => {
     invoke<Registration>("registration_status").then(setRegistration).catch(() => {
@@ -264,6 +277,17 @@ export function App() {
           Label printer
           {settings.label_enabled && <span className="dot" aria-label="on" />}
         </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "updates"}
+          onClick={() => setTab("updates")}
+        >
+          Updates
+          {/* The same dot the label role uses: says there is something here
+              without opening the tab to find out. */}
+          {updateReady && <span className="dot" aria-label="update available" />}
+        </button>
       </nav>
 
       {tab === "files" &&
@@ -311,9 +335,7 @@ export function App() {
         />
       )}
 
-      {/* Under both tabs, because updating is about the app rather than about
-          either of its two roles. */}
-      <UpdateSection />
+      {tab === "updates" && <UpdateSection onAvailable={setUpdateReady} />}
 
       {message && <p className={message.tone === "ok" ? "ok" : "bad"}>{message.text}</p>}
     </main>
@@ -596,16 +618,30 @@ function PollerFacts() {
  * handing it a file; a version check racing that would delay the one thing the
  * launch was for. The person asks.
  */
-function UpdateSection() {
+function UpdateSection({ onAvailable }: { onAvailable: (ready: boolean) => void }) {
   const [state, setState] = useState<UpdateCheck | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [checkedAt, setCheckedAt] = useState<Date | null>(null);
+
+  // ⚠️ Opens on whatever the scheduled check already found. Asking the
+  // network here would put a spinner in front of an answer we have.
+  useEffect(() => {
+    invoke<UpdateCheck | null>("last_update_check")
+      .then((last) => {
+        if (last) setState(last);
+      })
+      .catch(() => {});
+  }, []);
 
   const check = async () => {
     setBusy(true);
     setError(null);
     try {
-      setState(await invoke<UpdateCheck>("check_for_update"));
+      const result = await invoke<UpdateCheck>("check_for_update");
+      setState(result);
+      setCheckedAt(new Date());
+      onAvailable(result.available);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -630,13 +666,20 @@ function UpdateSection() {
   return (
     <section className="panel">
       <h2>Updates</h2>
+      <small>
+        BamDude Bridge looks for a new version shortly after it starts and every few hours after
+        that. This button asks straight away.
+      </small>
 
       <div className="row">
         <button type="button" onClick={() => void check()} disabled={busy}>
           Check for updates
         </button>
         {state && !state.available && !busy && (
-          <span className="muted">Up to date ({state.current_version}).</span>
+          <span className="muted">
+            Up to date ({state.current_version})
+            {checkedAt && ` · checked ${checkedAt.toLocaleTimeString()}`}
+          </span>
         )}
       </div>
 
