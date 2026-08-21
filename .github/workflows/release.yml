@@ -117,6 +117,27 @@ jobs:
           fi
           echo "version=$declared" >> "$GITHUB_ENV"
 
+      # ⚠️ The notes are not decoration any more: `latest.json` carries them, so
+      # this text is what an installed copy shows before somebody agrees to
+      # update. Notes left over from the previous version would be published as
+      # this one's — checked here rather than noticed by a user.
+      - name: Release notes must be written for this version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          declared=$(head -1 packaging/release-notes.md | sed -n 's/^version:[[:space:]]*//p')
+          tagged="${GITHUB_REF_NAME#v}"
+          if [ -z "$declared" ]; then
+            echo "packaging/release-notes.md must start with 'version: X.Y.Z'" >&2
+            exit 1
+          fi
+          if [ "$declared" != "$tagged" ]; then
+            echo "release notes are written for $declared, but the tag says $tagged" >&2
+            exit 1
+          fi
+          # The header line is a guard, not prose — strip it from what ships.
+          tail -n +2 packaging/release-notes.md | sed '/./,$!d' > release-body.md
+
       - name: Resolve version for a manual run
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         shell: bash
@@ -258,6 +279,7 @@ jobs:
           files: dist-release/*
           fail_on_unmatched_files: true
           prerelease: ${{ steps.tagkind.outputs.prerelease }}
+          body_path: release-body.md
 
       # ⚠️ After the release exists, because the notes ARE its body — which
       # the step above may have just generated. Writing them into the manifest
