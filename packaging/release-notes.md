@@ -2,6 +2,10 @@ version: 0.2.0
 
 BamDude Bridge learns its second job: printing labels on a printer plugged into this computer.
 
+## Look
+
+New BamDude identity: the app icon, the Start-menu tile, the installer and the tray mark follow the brand pack.
+
 ## Label printing
 
 BamDude draws a spool label and puts it in a queue; this app comes and takes it. Nothing connects *to* your desktop, so it works on a laptop, behind NAT, or through a firewall that would never allow the reverse.
