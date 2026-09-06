@@ -61,7 +61,7 @@ edit("src-tauri/Cargo.toml", /(\[package\][\s\S]*?\nversion = ")[^"]+(")/, `$1${
 // later build into a spurious diff.
 edit(
   "src-tauri/Cargo.lock",
-  /(name = "bamdude-bridge"\nversion = ")[^"]+(")/,
+  /(name = "bamdude-bridge"\r?\nversion = ")[^"]+(")/,
   `$1${version}$2`,
 );
 
