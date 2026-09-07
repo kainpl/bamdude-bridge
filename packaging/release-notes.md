@@ -1,7 +1,9 @@
-version: 0.2.1
+version: 0.2.2
 
-BamDude has a new face, and the Bridge wears it too.
+The tray icon is visible again on a light taskbar.
 
 ## Look
 
-The app icon, the Start-menu tile, the installer and the tray mark now carry the BamDude bar mark — the same one you see in BamDude itself and on bamdude.top. This release changes nothing else since 0.2.0.
+Since 0.2.1 the tray carried the bar mark alone, on transparency. The mark is light, so against a light Windows taskbar it was a pale shape on nothing and was easy to lose entirely. It now uses the dark rounded tile — the same icon the app and the installer already show — which brings its own background and reads the same under either Windows theme.
+
+Nothing else changed since 0.2.1.
