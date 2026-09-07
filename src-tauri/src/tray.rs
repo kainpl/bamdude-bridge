@@ -17,11 +17,15 @@ pub fn build(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let quit = MenuItem::with_id(app, MENU_QUIT, "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&open, &quit])?;
 
-    // ⚠️ Its OWN icon, not the window's. The app icon is a dark rounded plate
-    // with the mark taking 41% of its width — correct on a Start menu tile,
-    // and beside the glyphs every other tray icon is, it reads as a small
-    // badge rather than a peer. This one is the mark alone, filling the
-    // canvas, on transparency.
+    // ⚠️ Its OWN icon, not the window's, and deliberately the dark PLATE.
+    //
+    // This used to be the mark alone on transparency, on the reasoning that a
+    // plate reads as a badge beside the glyphs every other tray icon is. That
+    // reasoning assumed the mark could be seen at all: the mark is light
+    // (average luminance ~213), so on a LIGHT taskbar it was a pale shape on
+    // nothing and effectively vanished. An icon nobody can find is worse than
+    // one that does not match its neighbours, and the plate carries its own
+    // ground, so it reads the same under either Windows theme.
     //
     // Still 32x32, exactly as `default_window_icon` was, so the only thing
     // that changed here is the artwork. If it still looks wrong, the scaling
