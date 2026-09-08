@@ -41,7 +41,10 @@
     ],
     "windows": {
       "nsis": {
-        "installMode": "currentUser"
+        "installMode": "currentUser",
+        "customLanguageFiles": {
+          "English": "installer/English.nsh"
+        }
       }
     },
     "createUpdaterArtifacts": true
