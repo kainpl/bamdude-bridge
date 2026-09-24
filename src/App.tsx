@@ -232,7 +232,7 @@ export function App() {
           API key
           <input
             type="password"
-            placeholder="bb_…"
+            placeholder="bd_…"
             value={settings.api_key}
             onChange={(event) => setSettings({ ...settings, api_key: event.target.value })}
           />
