@@ -6,7 +6,7 @@ authors = ["BamDude contributors"]
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/kainpl/bamdude-bridge"
 edition = "2021"
-rust-version = "1.77"
+rust-version = "1.90"
 
 # ⚠️ Minor versions below are a first pass written before a toolchain existed
 # on this machine — nothing here has been resolved by cargo yet. Expect the
@@ -82,7 +82,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "time"] 
 
 # Self-update. The installer path is the official plugin; the portable path is
 # ours (see src/update/portable.rs) and needs the verification primitives.
-tauri-plugin-updater = "2"
+tauri-plugin-updater = "2.14.1"
 tauri-plugin-process = "2"
 
 # Remembers how big the window was left. ⚠️ Chosen over doing it by hand for
@@ -96,7 +96,7 @@ tauri-plugin-window-state = "2"
 minisign-verify = "0.2"
 semver = "1"
 sha2 = "0.10"
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "9.8.2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(windows)'.dependencies]
 # Registry access for the two keys that make BambuStudio offer the button and

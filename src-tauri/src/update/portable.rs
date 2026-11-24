@@ -381,8 +381,9 @@ mod tests {
 
     fn archive(version: &str, arch: &str, exe: &[u8], hash: Option<&str>) -> Vec<u8> {
         let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        // Match the compressed ZIP distributed by the Windows release workflow.
         let options = zip::write::SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Stored);
+            .compression_method(zip::CompressionMethod::Deflated);
         let digest: String = Sha256::digest(exe)
             .iter()
             .map(|b| format!("{b:02x}"))
